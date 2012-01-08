@@ -1,0 +1,19 @@
+# Copyright (c) 2011 Sung Pae <self@sungpae.com>
+# Distributed under the MIT license.
+# http://www.opensource.org/licenses/mit-license.php
+
+task :default => :localhosts6
+
+desc 'Create IPv6 entries for all 127.0.0.1 entries in the hosts file'
+task :localhosts6 do
+  hosts = File.read 'hosts'
+  ipv6hosts = Hash[hosts.split("\n").grep(/\A\s*::1\s+(.*)/) { [$1, 1] }]
+
+  buf = hosts.lines.map do |line|
+    match = line.match /\A\s*127\.0\.0\.1\s+(.*)/
+    next line if match.nil? or ipv6hosts.has_key? match[1]
+    line + line.sub(/\A(\s*)127\.0\.0\.1/, '\1::1      ')
+  end.join
+
+  File.open('hosts', 'w') { |f| f.write buf }
+end

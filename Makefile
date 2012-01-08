@@ -13,7 +13,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-PREFIX = /usr/local
+# WARNING: PREFIX must be defined in the environment! (just use the rake tasks)
 BINDIR = ${PREFIX}/sbin
 MANDIR = ${PREFIX}/share/man
 LOCALEDIR = ${PREFIX}/share/locale
@@ -57,7 +57,7 @@ clean :
 install : all install-common
 
 install-common :
-	$(INSTALL) -d $(DESTDIR)$(BINDIR) -d $(DESTDIR)$(MANDIR)/man8
+	$(INSTALL) -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(MANDIR)/man8
 	$(INSTALL) -m 644 $(MAN)/dnsmasq.8 $(DESTDIR)$(MANDIR)/man8 
 	$(INSTALL) -m 755 $(SRC)/dnsmasq $(DESTDIR)$(BINDIR)
 

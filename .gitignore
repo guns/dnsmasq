@@ -1,0 +1,5 @@
+*.o
+*.mo
+*.pot
+src/dnsmasq
+config.yml

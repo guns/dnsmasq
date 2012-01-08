@@ -63,7 +63,7 @@
 
 #define DEFLEASE 3600 /* default lease time, 1 hour */
 #define CHUSER "nobody"
-#define CHGRP "dip"
+#define CHGRP "nobody"
 #define NAMESERVER_PORT 53
 #define DHCP_SERVER_PORT 67
 #define DHCP_CLIENT_PORT 68

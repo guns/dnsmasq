@@ -1,0 +1,81 @@
+#  _________
+#  ______  /_________________ __________ ____________ _
+#  _  __  /  __ \_  ___/  __ `__ \   __ `/  ___/  __ `/
+#  / /_/ /  / / /(__  )  / / / / // /_/ /(__  )/ /_/ /
+#  \__,_//_/ /_//____//_/ /_/ /_/ \__,_//____/ \__, /
+#                                                /_/
+#       guns <self@sungpae.com>
+
+# Never forward plain names (without a dot or domain part)
+domain-needed
+
+# Never forward addresses in the non-routed address spaces.
+bogus-priv
+
+# Change this line if you want dns to get its upstream servers from
+# somewhere other that /etc/resolv.conf
+resolv-file=<%= File.join @prefix || '/usr/local', 'etc/resolv.conf' %>
+
+# If you don't want dnsmasq to poll /etc/resolv.conf or other resolv
+# files for changes and re-read them then uncomment this.
+no-poll
+
+# Add domains which you want to force to an IP address here.
+# The example below send any host in double-click.net to a local
+# web-server.
+address=/dev/127.0.0.1
+address=/api/127.0.0.1
+
+# If you want dnsmasq to change uid and gid to something other
+# than the default, edit the following lines.
+user=nobody
+group=nobody
+
+# If you want dnsmasq to listen for DHCP and DNS requests only on
+# specified interfaces (and the loopback) give the name of the
+# interface (eg eth0) here.
+# Repeat the line for more than one interface.
+listen-address=127.0.0.1
+
+# If you want dnsmasq to provide only DNS service on an interface,
+# configure it as shown above, and then use the following line to
+# disable DHCP and TFTP on it.
+no-dhcp-interface=lo0
+
+# On systems which support it, dnsmasq binds the wildcard address,
+# even when it is listening on only some interfaces. It then discards
+# requests that it shouldn't reply to. This has the advantage of
+# working even when interfaces come and go and change address. If you
+# want dnsmasq to really bind only the interfaces it is listening on,
+# uncomment this option. About the only time you may need this is when
+# running another nameserver on the same machine.
+bind-interfaces
+
+# or if you want it to read another file, as well as /etc/hosts, use
+# this.
+addn-hosts=<%= File.join @prefix || '/usr/local', 'etc/hosts' %>
+
+# Set the cachesize here.
+cache-size=<%= 2**16 %>
+
+# Normally responses which come form /etc/hosts and the DHCP lease
+# file have Time-To-Live set as zero, which conventionally means
+# do not cache further. If you are happy to trade lower load on the
+# server for potentially stale date, you can set a time-to-live (in
+# seconds) here.
+local-ttl=<%= 60*60*24 %>
+
+# If you want dnsmasq to detect attempts by Verisign to send queries
+# to unregistered .com and .net hosts to its sitefinder service and
+# have dnsmasq instead return the correct NXDOMAIN response, uncomment
+# this line. You can add similar lines to do the same for other
+# registries which have implemented wildcard A records.
+bogus-nxdomain=64.94.110.11   # Verisign
+bogus-nxdomain=67.215.65.132  # OpenDNS guide
+bogus-nxdomain=208.67.219.135 # OpenDNS blocked pages
+
+# Reject (and log) addresses from upstream nameservers  which  are
+# in  the private IP ranges. This blocks an attack where a browser
+# behind a firewall is used to probe machines on  the  local  net-
+# work.
+stop-dns-rebind
