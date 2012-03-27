@@ -22,40 +22,34 @@ end
 
 desc 'Configure and build dnsmasq (with i18n)'
 task :build do
-  if File.exists? @config
-    puts "#{@config.inspect} already exists!"
-  else
-    # build with DNS features only
-    env = {}
-    env['PREFIX'] = ENV['PREFIX'] || '/opt/dnsmasq'
-    env['COPTS']  = %Q(-DNO_TFTP -DNO_DHCP -DCONFFILE='"#{env['PREFIX']}/etc/dnsmasq.conf"')
+  # Build with DNS features only
+  env = {}
+  env['PREFIX'] = ENV['PREFIX'] || '/opt/dnsmasq'
+  env['COPTS' ] = %Q(-DNO_TFTP -DNO_DHCP -DHAVE_IDN -DCONFFILE='"#{env['PREFIX']}/etc/dnsmasq.conf"')
 
-    # some extra flags for OS X
-    if RUBY_PLATFORM[/darwin/]
-      # https://github.com/mxcl/homebrew/issues/5976
-      env['COPTS']  += ' -D__APPLE_USE_RFC_3542 '
-      env['LDFLAGS'] = '-lintl'
+  # Some extra flags for OS X
+  if RUBY_PLATFORM[/darwin/]
+    env['LDFLAGS'] = '-lintl'
 
-      # Homebrew linking help
-      if system 'which brew &>/dev/null'
-        gettext = %x(brew --prefix gettext).chomp
-        env['PATH']     = gettext + '/bin:' + ENV['PATH']
-        env['LDFLAGS'] << %Q( -L#{gettext}/lib )
-        env['COPTS']   << %Q( -I#{gettext}/include )
-      end
-    else
-      env['LDFLAGS'] = '-lidn'
+    # Homebrew linking help
+    if system 'which brew &>/dev/null'
+      gettext = %x(brew --prefix gettext).chomp
+      env['PATH'   ]  = gettext + '/bin:' + ENV['PATH']
+      env['COPTS'  ] << %Q( -I#{gettext}/include )
+      env['LDFLAGS'] << %Q( -L#{gettext}/lib )
     end
-
-    # clean and build!
-    Rake::Task[:clean].invoke
-    execute env, %W[make --jobs=#{(ENV['JOBS'] || 2).to_i} all-i18n]
-
-    # store configuration values for other programs / tasks
-    puts "Writing configuration to #{@config.inspect}"
-    File.open(@config, 'w') { |f| f.puts env.to_yaml }
-    puts env.to_yaml
+  else
+    env['LDFLAGS'] = '-lidn'
   end
+
+  # Clean and build!
+  Rake::Task[:clean].invoke
+  execute env, %W[make --jobs=#{(ENV['JOBS'] || 2).to_i} all-i18n]
+
+  # Store configuration values for other programs / tasks
+  puts "Writing configuration to #{@config.inspect}"
+  File.open(@config, 'w') { |f| f.puts env.to_yaml }
+  puts env.to_yaml
 end
 
 desc 'Install dnsmasq'

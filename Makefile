@@ -19,14 +19,15 @@
 # Variables you may well want to override.
 
 # WARNING: PREFIX must be defined in the environment! (just use the rake tasks)
+# PREFIX        = /usr/local
 BINDIR        = $(PREFIX)/sbin
 MANDIR        = $(PREFIX)/share/man
 LOCALEDIR     = $(PREFIX)/share/locale
 BUILDDIR      = $(SRC)
 DESTDIR       = 
 CFLAGS        = -Wall -W -O2
-LDFLAGS       = 
-COPTS         = 
+# LDFLAGS       = 
+# COPTS         = 
 RPM_OPT_FLAGS = 
 LIBS          = 
 
@@ -84,7 +85,7 @@ clean :
 install : all install-common
 
 install-common :
-	$(INSTALL) -d $(DESTDIR)$(BINDIR) -d $(DESTDIR)$(MANDIR)/man8
+	$(INSTALL) -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(MANDIR)/man8
 	$(INSTALL) -m 644 $(MAN)/dnsmasq.8 $(DESTDIR)$(MANDIR)/man8 
 	$(INSTALL) -m 755 $(BUILDDIR)/dnsmasq $(DESTDIR)$(BINDIR)
 
