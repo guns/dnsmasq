@@ -31,6 +31,6 @@ stop() {
 case $1 in
 start)      start;;
 stop)       stop;;
-restart)    stop; sleep 2; start;;
+restart)    stop; while alive; do sleep 1; done; start;;
 *)          echo "Usage: ${0##*/} start|stop|restart"; exit 1
 esac
