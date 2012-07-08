@@ -17,3 +17,24 @@ task :localhosts6 do
 
   File.open('hosts', 'w') { |f| f.write buf }
 end
+
+desc 'Update adblock domains in hosts'
+task :update do
+  require 'net/http'
+
+  hosts = File.readlines 'hosts'
+  block = 'http://winhelp2002.mvps.org/hosts.txt'
+
+  if index = hosts.index { |l| l =~ /\A### ADBLOCK/ }
+    puts "Updating adblock domains from #{block}"
+
+    lines = hosts[0..index]
+    lines << Net::HTTP.get(URI.parse block).gsub(/\r\n/, "\n")
+
+    File.open 'hosts', 'w' do |f|
+      f.puts lines.join
+    end
+
+    Rake::Task[:localhosts6].invoke
+  end
+end
