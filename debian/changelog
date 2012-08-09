@@ -1,3 +1,23 @@
+dnsmasq (2.63-1) unstable; urgency=low
+
+   * New upstream.
+   * Move /etc/dbus-1/system.d/dnsmasq.conf from dnsmasq to dnsmasq-base.
+
+ -- Simon Kelley <simon@thekelleys.org.uk>  Mon, 11 Jun 2012 21:55:35 +0000
+
+dnsmasq (2.62-3) unstable; urgency=low
+
+   * Do resolvconf and /etc/default startup logic when
+     starting with systemd. (closes: #675854)
+
+ -- Simon Kelley <simon@thekelleys.org.uk>  Mon, 11 Jun 2012 21:50:11 +0000
+
+dnsmasq (2.62-2) unstable; urgency=low
+
+   * Pass LDFLAGS to make to get hardening in linker.
+
+ -- Simon Kelley <simon@thekelleys.org.uk>  Thu, 7 Jun 2012 09:53:43 +0000
+
 dnsmasq (2.62-1) unstable; urgency=low
 
    * New upstream.
