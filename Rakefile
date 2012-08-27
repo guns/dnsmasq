@@ -32,7 +32,7 @@ task :build do
     env['LDFLAGS'] = '-lintl'
 
     # Homebrew linking help
-    if system 'which brew &>/dev/null'
+    if system '/bin/sh -c "command -v brew" &>/dev/null'
       gettext = %x(brew --prefix gettext).chomp
       env['PATH'   ]  = gettext + '/bin:' + ENV['PATH']
       env['COPTS'  ] << %Q( -I#{gettext}/include )
