@@ -14,6 +14,10 @@ end
 
 task :default => :build
 
+task :env do
+  @env = YAML.load_file @config
+end
+
 desc 'Clean build droppings'
 task :clean do
   execute Hash.new, %w[make clean]
@@ -53,30 +57,22 @@ task :build do
 end
 
 desc 'Install dnsmasq'
-task :install do
-  env = YAML.load_file @config
-  execute env, %w[make install-i18n]
+task :install => :env do
+  execute @env, %w[make install-i18n]
 
-  @prefix = env['PREFIX']
+  @prefix = @env['PREFIX']
   confdir = File.join @prefix, 'etc'
   mkdir_p confdir
 
-  # install rc file
-  rc = File.join @prefix, 'sbin/dnsmasq.rc'
-  puts "installing #{rc}"
-  File.open rc, 'w', 0755 do |f|
-    f.write ERB.new(File.read 'contrib/guns/dnsmasq.rc.erb').result(binding)
-  end
-
-  # install configuration file
-  confbuf = ERB.new(File.read 'contrib/guns/dnsmasq.conf.erb').result(binding)
+  # Install configuration file
+  confbuf = ERB.new(File.read 'contrib/guns/dnsmasq.conf.erb').result binding
   conf = confdir + '/dnsmasq.conf'
   unless File.exists? conf
     puts "installing #{conf}"
     File.open(conf, 'w') { |f| f.write confbuf }
   end
 
-  # along with a default copy
+  # Along with a default copy
   defaultrc = confdir + '/dnsmasq.conf.default'
   puts "installing #{defaultrc}"
   File.open(defaultrc, 'w') { |f| f.write confbuf }
@@ -85,5 +81,17 @@ task :install do
   Dir['contrib/guns/{hosts,resolv.conf,Rakefile}'].each do |f|
     dst = File.join confdir, File.basename(f)
     cp f, dst unless File.exists? dst
+  end
+end
+
+namespace :install do
+  desc 'Install init file'
+  task :init => :env do
+    @prefix = @env['PREFIX']
+    rc = File.join @prefix, 'sbin/dnsmasq.rc'
+    puts "Installing #{rc}"
+    File.open rc, 'w', 0755 do |f|
+      f.write ERB.new(File.read 'contrib/guns/dnsmasq.rc.erb').result(binding)
+    end
   end
 end
