@@ -1,0 +1,11 @@
+[Unit]
+Description=A lightweight DHCP and caching DNS server
+
+[Service]
+ExecStartPre=<%= @prefix || '/usr/local' %>/sbin/dnsmasq --test
+ExecStart=<%= @prefix || '/usr/local' %>/sbin/dnsmasq --keep-in-foreground
+KillMode=process
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

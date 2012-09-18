@@ -91,7 +91,18 @@ namespace :install do
     rc = File.join @prefix, 'sbin/dnsmasq.rc'
     puts "Installing #{rc}"
     File.open rc, 'w', 0755 do |f|
-      f.write ERB.new(File.read 'contrib/guns/dnsmasq.rc.erb').result(binding)
+      f.puts ERB.new(File.read 'contrib/guns/dnsmasq.rc.erb').result(binding)
+    end
+  end
+
+  desc 'Install systemd service file'
+  task :service => :env do
+    @prefix = @env['PREFIX']
+    service = File.join @prefix, 'lib/systemd/system/dnsmasq.service'
+    puts "Installing #{service}"
+    FileUtils.mkdir_p File.dirname(service)
+    File.open service, 'w', 0644 do |f|
+      f.puts ERB.new(File.read 'contrib/guns/dnsmasq.service.erb').result(binding)
     end
   end
 end
