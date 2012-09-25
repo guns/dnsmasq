@@ -88,7 +88,8 @@ namespace :install do
   desc 'Install init file'
   task :init => :env do
     @prefix = @env['PREFIX']
-    rc = File.join @prefix, 'sbin/dnsmasq.rc'
+    rc = File.join @prefix, 'etc/rc.d/dnsmasq'
+    FileUtils.mkdir_p File.dirname(rc)
     puts "Installing #{rc}"
     File.open rc, 'w', 0755 do |f|
       f.puts ERB.new(File.read 'contrib/guns/dnsmasq.rc.erb').result(binding)
