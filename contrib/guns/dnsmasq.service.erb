@@ -1,11 +1,13 @@
 [Unit]
 Description=A lightweight DHCP and caching DNS server
+Requires=network.target
+After=network.target
 
 [Service]
+Type=simple
 ExecStartPre=<%= @prefix || '/opt/dnsmasq' %>/sbin/dnsmasq --test
 ExecStart=<%= @prefix || '/opt/dnsmasq' %>/sbin/dnsmasq --keep-in-foreground
-KillMode=process
-Restart=always
+ExecReload=/bin/kill -HUP $MAINPID
 
 [Install]
 WantedBy=multi-user.target
