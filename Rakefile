@@ -82,6 +82,9 @@ task :install => :env do
     dst = File.join confdir, File.basename(f)
     cp f, dst unless File.exists? dst
   end
+
+  Rake::Task['install:init'].execute
+  Rake::Task['install:service'].execute
 end
 
 namespace :install do
