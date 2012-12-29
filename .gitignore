@@ -3,3 +3,4 @@
 *.pot
 src/dnsmasq
 config.yml
+/src/.configured
