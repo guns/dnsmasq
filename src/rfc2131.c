@@ -493,8 +493,9 @@ size_t dhcp_reply(struct dhcp_context *context, char *iface_name, int int_index,
 	      lease_set_interface(lease, int_index, now);
 	      
 	      clear_packet(mess, end);
+	      match_vendor_opts(NULL, daemon->dhcp_opts); /* clear flags */
 	      do_options(context, mess, end, NULL, hostname, get_domain(mess->yiaddr), 
-			 netid, subnet_addr, 0, 0, 0, NULL, 0, now);
+			 netid, subnet_addr, 0, 0, -1, NULL, 0, now);
 	    }
 	}
       
@@ -515,11 +516,22 @@ size_t dhcp_reply(struct dhcp_context *context, char *iface_name, int int_index,
       op += 3;
       pp = op;
       
-      /* Always force update, since the client has no way to do it itself. */
-      if (!option_bool(OPT_FQDN_UPDATE) && !(fqdn_flags & 0x01))
-	fqdn_flags |= 0x03;
-
-      fqdn_flags &= ~0x08;
+      /* NB, the following always sets at least one bit */
+      if (option_bool(OPT_FQDN_UPDATE))
+	{
+	  if (fqdn_flags & 0x01)
+	    {
+	      fqdn_flags |= 0x02; /* set O */
+	      fqdn_flags &= ~0x01; /* clear S */
+	    }
+	  fqdn_flags |= 0x08; /* set N */
+	}
+      else 
+	{
+	  if (!(fqdn_flags & 0x01))
+	    fqdn_flags |= 0x03; /* set S and O */
+	  fqdn_flags &= ~0x08; /* clear N */
+	}
       
       if (fqdn_flags & 0x04)
 	while (*op != 0 && ((op + (*op) + 1) - pp) < len)
@@ -1375,6 +1387,7 @@ size_t dhcp_reply(struct dhcp_context *context, char *iface_name, int int_index,
       
       if (lease)
 	{
+	  lease_set_interface(lease, int_index, now);
 	  if (override.s_addr != 0)
 	    lease->override = override;
 	  else
@@ -1385,16 +1398,6 @@ size_t dhcp_reply(struct dhcp_context *context, char *iface_name, int int_index,
       option_put(mess, end, OPTION_MESSAGE_TYPE, 1, DHCPACK);
       option_put(mess, end, OPTION_SERVER_IDENTIFIER, INADDRSZ, ntohl(server_id(context, override, fallback).s_addr));
       
-      if (lease)
-	{
-	  if (lease->expires == 0)
-	    time = 0xffffffff;
-	  else
-	    time = (unsigned int)difftime(lease->expires, now);
-	  option_put(mess, end, OPTION_LEASE_TIME, 4, time);
-	  lease_set_interface(lease, int_index, now);
-	}
-
       do_options(context, mess, end, req_options, hostname, get_domain(mess->ciaddr),
 		 netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now);
       
@@ -2261,7 +2264,7 @@ static void do_options(struct dhcp_context *context,
 	  
 	  if ((p = free_space(mess, end, OPTION_CLIENT_FQDN, len)))
 	    {
-	      *(p++) = fqdn_flags;
+	      *(p++) = fqdn_flags & 0x0f; /* MBZ bits to zero */ 
 	      *(p++) = 255;
 	      *(p++) = 255;
 

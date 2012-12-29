@@ -336,7 +336,8 @@ static int nl_async(struct nlmsghdr *h)
   if (h->nlmsg_type == NLMSG_ERROR)
     {
       struct nlmsgerr *err = NLMSG_DATA(h);
-      my_syslog(LOG_ERR, _("netlink returns error: %s"), strerror(-(err->error)));
+      if (err->error != 0)
+	my_syslog(LOG_ERR, _("netlink returns error: %s"), strerror(-(err->error)));
       return 0;
     }
   else if (h->nlmsg_pid == 0 && h->nlmsg_type == RTM_NEWROUTE) 
@@ -370,9 +371,9 @@ static int nl_async(struct nlmsghdr *h)
 	}
       return 0;
     }
-#ifdef HAVE_DHCP6
   else if (h->nlmsg_type == RTM_NEWADDR) 
     {
+#ifdef HAVE_DHCP6
       /* force RAs to sync new network and pick up new interfaces.  */
       if (daemon->ra_contexts)
 	{
@@ -382,9 +383,9 @@ static int nl_async(struct nlmsghdr *h)
 	     iface_enumerate and can't re-enter it now */
 	  send_alarm(0, 0);
 	}
-      return 1; /* clever bind mode - rescan */
-    }
 #endif	 
+      return 1; /* clever bind mode - rescan */
+    }	 
   
   return 0;
 }
