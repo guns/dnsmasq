@@ -121,6 +121,7 @@ struct myoption {
 #define LOPT_RR        310
 #define LOPT_CLVERBIND 311
 #define LOPT_MAXCTTL   312
+#define LOPT_HOSTCACHE 313
 
 #ifdef HAVE_GETOPT_LONG
 static const struct option opts[] =  
@@ -247,6 +248,7 @@ static const struct myoption opts[] =
     { "dhcp-duid", 1, 0, LOPT_DUID },
     { "host-record", 1, 0, LOPT_HOST_REC },
     { "bind-dynamic", 0, 0, LOPT_CLVERBIND },
+    { "hosts-cache", 1, 0, LOPT_HOSTCACHE },
     { NULL, 0, 0, 0 }
   };
 
@@ -379,6 +381,7 @@ static struct {
   { LOPT_HOST_REC, ARG_DUP, "<name>,<address>", gettext_noop("Specify host (A/AAAA and PTR) records"), NULL },
   { LOPT_RR, ARG_DUP, "<name>,<RR-number>,[<data>]", gettext_noop("Specify arbitrary DNS resource record"), NULL },
   { LOPT_CLVERBIND, OPT_CLEVERBIND, NULL, gettext_noop("Bind to interfaces in use - check for new interfaces"), NULL},
+  { LOPT_HOSTCACHE, ARG_ONE, "<path>", gettext_noop("Dump cached A records to <path> on SIGUSR1"), NULL },
   { 0, 0, NULL, NULL, NULL }
 }; 
 
@@ -3184,6 +3187,11 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 	  daemon->host_records_tail->next = new;
 	new->next = NULL;
 	daemon->host_records_tail = new;
+	break;
+      }
+    case LOPT_HOSTCACHE: /* --hosts-cache */
+      {
+	daemon->hosts_cache = opt_string_alloc(arg);
 	break;
       }
       
