@@ -30,9 +30,14 @@ task :build do
   env = {}
   env['PREFIX'] = ENV['PREFIX'] || '/opt/dnsmasq'
   env['COPTS' ] = %Q(-DNO_TFTP -DNO_DHCP -DHAVE_IDN -DCONFFILE='"#{env['PREFIX']}/etc/dnsmasq.conf"')
+  env['LDFLAGS'] = '-lidn'
+
+  if RUBY_PLATFORM =~ /linux/i
+    env['COPTS'] << ' -DHAVE_CONNTRACK'
+  end
 
   # Some extra flags for OS X
-  if RUBY_PLATFORM[/darwin/]
+  if RUBY_PLATFORM =~ /darwin/i
     env['LDFLAGS'] = '-lintl'
 
     # Homebrew linking help
@@ -42,8 +47,6 @@ task :build do
       env['COPTS'  ] << %Q( -I#{gettext}/include )
       env['LDFLAGS'] << %Q( -L#{gettext}/lib )
     end
-  else
-    env['LDFLAGS'] = '-lidn'
   end
 
   # Clean and build!
