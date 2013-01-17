@@ -778,6 +778,7 @@ extern struct daemon {
   unsigned int duid_enterprise, duid_config_len;
   unsigned char *duid_config;
   char *dbus_name;
+  char *hosts_cache;
 
   /* globally used stuff for DNS */
   char *packet; /* packet buffer */

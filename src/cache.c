@@ -1165,10 +1165,20 @@ void dump_cache(time_t now)
 	my_syslog(LOG_INFO, _("server %s#%d: queries sent %u, retried or failed %u"), daemon->addrbuff, port, queries, failed_queries);
       }
   
-  if (option_bool(OPT_DEBUG) || option_bool(OPT_LOG))
+  if (option_bool(OPT_DEBUG) || option_bool(OPT_LOG) || daemon->hosts_cache != NULL)
     {
       struct crec *cache ;
       int i;
+      int dumping_hosts = daemon->hosts_cache != NULL;
+      FILE *hosts_cache = NULL;
+      if (dumping_hosts) {
+        hosts_cache = fopen(daemon->hosts_cache, "w");
+        if (hosts_cache == NULL) {
+          dumping_hosts = 0;
+          my_syslog(LOG_WARNING, "Failed to open hosts cache file: \"%s\"", daemon->hosts_cache);
+        }
+      }
+
       my_syslog(LOG_INFO, "Host                                     Address                        Flags     Expires");
     
       for (i=0; i<hash_size; i++)
@@ -1206,6 +1216,8 @@ void dump_cache(time_t now)
 		else if (cache->flags & F_IPV6)
 		  inet_ntop(AF_INET6, &cache->addr.addr, a, ADDRSTRLEN);
 #endif
+		if (dumping_hosts)
+		  fprintf(hosts_cache, "%s\t%s\n", a, cache_get_name(cache));
 	      }
 
 	    p += sprintf(p, "%-30.30s %s%s%s%s%s%s%s%s%s%s%s%s%s  ", a, 
@@ -1231,6 +1243,9 @@ void dump_cache(time_t now)
 #endif
 	    my_syslog(LOG_INFO, daemon->namebuff);
 	  }
+
+      if (dumping_hosts)
+        fclose(hosts_cache);
     }
 }
 
