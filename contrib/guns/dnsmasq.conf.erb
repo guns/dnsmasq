@@ -57,6 +57,7 @@ addn-hosts=<%= File.join @prefix || '/usr/local', 'etc/hosts' %>
 
 # Set the cachesize here.
 cache-size=<%= 2**16 %>
+hosts-cache=/var/cache/dnsmasq/hosts.cache
 
 # Normally responses which come form /etc/hosts and the DHCP lease
 # file have Time-To-Live set as zero, which conventionally means
