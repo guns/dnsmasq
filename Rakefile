@@ -83,6 +83,7 @@ task :install => :env do
 
   Rake::Task['install:init'].execute
   Rake::Task['install:service'].execute
+  Rake::Task['install:cache'].execute
 end
 
 namespace :install do
@@ -106,5 +107,13 @@ namespace :install do
     File.open service, 'w', 0644 do |f|
       f.puts ERB.new(File.read 'contrib/guns/dnsmasq.service.erb').result(binding)
     end
+  end
+
+  desc 'Create /var/cache/dnsmasq directory and install Rakefile'
+  task :cache do
+    dir = '/var/cache/dnsmasq'
+    mkdir_p dir, :mode => 0755
+    chown 'dns', 'dns', dir
+    cp 'contrib/guns/cache/Rakefile', dir
   end
 end
