@@ -7,11 +7,6 @@ require 'erb'
 
 @config = 'config.yml'
 
-def execute env, cmd
-  puts (env.map { |k,v| "#{k}=#{v.inspect}" } + cmd).join(' ')
-  system env, *cmd
-end
-
 task :default => :build
 
 task :env do
@@ -20,7 +15,7 @@ end
 
 desc 'Clean build droppings'
 task :clean do
-  execute Hash.new, %w[make clean]
+  sh *%w[make clean]
   rm_f @config
 end
 
@@ -51,7 +46,7 @@ task :build do
 
   # Clean and build!
   Rake::Task[:clean].invoke
-  execute env, %W[make --jobs=#{(ENV['JOBS'] || 2).to_i} all-i18n]
+  sh env, *%W[make --jobs=#{(ENV['JOBS'] || 2).to_i} all-i18n]
 
   # Store configuration values for other programs / tasks
   puts "Writing configuration to #{@config.inspect}"
@@ -61,7 +56,7 @@ end
 
 desc 'Install dnsmasq'
 task :install => :env do
-  execute @env, %w[make install-i18n]
+  sh @env, *%w[make install-i18n]
 
   @prefix = @env['PREFIX']
   confdir = File.join @prefix, 'etc'
@@ -95,7 +90,7 @@ namespace :install do
   task :init => :env do
     @prefix = @env['PREFIX']
     rc = File.join @prefix, 'etc/rc.d/dnsmasq'
-    FileUtils.mkdir_p File.dirname(rc)
+    mkdir_p File.dirname(rc)
     puts "Installing #{rc}"
     File.open rc, 'w', 0755 do |f|
       f.puts ERB.new(File.read 'contrib/guns/dnsmasq.rc.erb').result(binding)
@@ -107,7 +102,7 @@ namespace :install do
     @prefix = @env['PREFIX']
     service = File.join @prefix, 'lib/systemd/system/dnsmasq.service'
     puts "Installing #{service}"
-    FileUtils.mkdir_p File.dirname(service)
+    mkdir_p File.dirname(service), :mode => 0755
     File.open service, 'w', 0644 do |f|
       f.puts ERB.new(File.read 'contrib/guns/dnsmasq.service.erb').result(binding)
     end
