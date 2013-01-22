@@ -5,6 +5,7 @@ task :default => :dump
 desc 'Dump and merge dnsmasq host cache'
 task :dump do
   require 'set'
+  require 'etc'
 
   pid = %x(ps axo pid,ucomm).lines.find { |l| l =~ /\bdnsmasq\Z/ }.to_i
   return if pid.zero?
@@ -26,6 +27,8 @@ task :dump do
   hosts = File.exists?(cache) ? parse_hosts.call(File.read cache) : {}
 
   # Send USR1 and wait for dnsmasq to close the cache file
+  user = Etc.getpwnam 'dns'
+  File.chown user.uid, user.gid, cache
   Process.kill 'SIGUSR1', pid
   sleep 0.1 until %x(lsof -p #{pid} 2>/dev/null).lines.grep(Regexp.new cache).empty?
 
