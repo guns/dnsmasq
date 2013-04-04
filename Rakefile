@@ -24,11 +24,11 @@ task :build do
   # Build with DNS features only
   env = {}
   env['PREFIX'] = ENV['PREFIX'] || '/opt/dnsmasq'
-  env['COPTS' ] = %Q(-DNO_TFTP -DNO_DHCP -DHAVE_IDN -DCONFFILE='"#{env['PREFIX']}/etc/dnsmasq.conf"')
+  env['COPTS' ] = %Q(-DNO_TFTP -DNO_DHCP -DHAVE_IDN -DCONFFILE='"/etc/dnsmasq/dnsmasq.conf"')
   env['LDFLAGS'] = '-lidn'
 
   if RUBY_PLATFORM =~ /linux/i
-    env['COPTS'] << ' -DHAVE_CONNTRACK'
+    env['COPTS'] << ' -DHAVE_CONNTRACK '
   end
 
   # Some extra flags for OS X
@@ -49,7 +49,7 @@ task :build do
   sh env, *%W[make --jobs=#{(ENV['JOBS'] || 2).to_i} all-i18n]
 
   # Store configuration values for other programs / tasks
-  puts "Writing configuration to #{@config.inspect}"
+  puts "# Writing configuration to #{@config.inspect}"
   File.open(@config, 'w') { |f| f.puts env.to_yaml }
   puts env.to_yaml
 end
@@ -59,20 +59,20 @@ task :install => :env do
   sh @env, *%w[make install-i18n]
 
   @prefix = @env['PREFIX']
-  confdir = File.join @prefix, 'etc'
+  confdir = '/etc/dnsmasq'
   mkdir_p confdir
 
   # Install configuration file
-  confbuf = ERB.new(File.read 'contrib/guns/dnsmasq.conf.erb').result binding
-  conf = confdir + '/dnsmasq.conf'
+  confbuf = File.read 'contrib/guns/dnsmasq.conf'
+  conf = File.join confdir, 'dnsmasq.conf'
   unless File.exists? conf
-    puts "installing #{conf}"
+    puts "# Installing #{conf}"
     File.open(conf, 'w') { |f| f.write confbuf }
   end
 
   # Along with a default copy
-  defaultrc = confdir + '/dnsmasq.conf.default'
-  puts "installing #{defaultrc}"
+  defaultrc = File.join confdir, 'dnsmasq.conf.default'
+  puts "# Installing #{defaultrc}"
   File.open(defaultrc, 'w') { |f| f.write confbuf }
 
   # Install local resolv.conf, hosts file, and rakefile
@@ -92,7 +92,7 @@ namespace :install do
     @prefix = @env['PREFIX']
     rc = File.join @prefix, 'etc/rc.d/dnsmasq'
     mkdir_p File.dirname(rc)
-    puts "Installing #{rc}"
+    puts "# Installing #{rc}"
     File.open rc, 'w', 0755 do |f|
       f.puts ERB.new(File.read 'contrib/guns/dnsmasq.rc.erb').result(binding)
     end
@@ -102,7 +102,7 @@ namespace :install do
   task :service => :env do
     @prefix = @env['PREFIX']
     service = File.join @prefix, 'lib/systemd/system/dnsmasq.service'
-    puts "Installing #{service}"
+    puts "# Installing #{service}"
     mkdir_p File.dirname(service), :mode => 0755
     File.open service, 'w', 0644 do |f|
       f.puts ERB.new(File.read 'contrib/guns/dnsmasq.service.erb').result(binding)
