@@ -6,8 +6,9 @@ desc 'Dump and merge dnsmasq host cache'
 task :dump do
   require 'set'
   require 'etc'
+  require 'fileutils'
 
-  pid = %x(ps axo pid,ucomm).lines.find { |l| l =~ /\bdnsmasq\Z/ }.to_i
+  pid = %x(ps axo pid,ucomm).lines.find { |l| l.strip =~ /\bdnsmasq\z/ }.to_i
   return if pid.zero?
 
   # Create a table of hostnames to addresses, eliding any aliases of localhost
@@ -28,6 +29,7 @@ task :dump do
 
   # Send USR1 and wait for dnsmasq to close the cache file
   user = Etc.getpwnam 'dns'
+  FileUtils.touch cache
   File.chown user.uid, user.gid, cache
   Process.kill 'SIGUSR1', pid
   sleep 0.1 until %x(lsof -p #{pid} 2>/dev/null).lines.grep(Regexp.new cache).empty?
