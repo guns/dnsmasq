@@ -3466,7 +3466,8 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
       }
     case LOPT_HOSTCACHE: /* --hosts-cache */
       {
-	daemon->hosts_cache = opt_string_alloc(arg);
+	if (daemon->hosts_cache == NULL)
+	  daemon->hosts_cache = opt_string_alloc(arg);
 	break;
       }
       
