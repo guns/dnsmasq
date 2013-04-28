@@ -1214,8 +1214,11 @@ void dump_cache(time_t now)
 	    else if (cache->flags & F_CNAME) 
 	      {
 		a = "";
-		if (!is_outdated_cname_pointer(cache))
+		if (!is_outdated_cname_pointer(cache)) {
 		  a = cache_get_name(cache->addr.cname.cache);
+		  if (dumping_hosts)
+		    fprintf(hosts_cache, "#%s\t%s\n", a, cache_get_name(cache));
+		}
 	      }
 #ifdef HAVE_DNSSEC
 	    else if (cache->flags & F_DNSKEY)
