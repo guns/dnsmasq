@@ -65,17 +65,17 @@ task :whitelist do
   require 'set'
 
   # Host to direct whitelisted DNS queries
-  # nameserver = '192.168.1.1'
+  nameserver = '192.168.1.1'
 
   # Domains that should never enter the whitelist.
   #
   # Each entry must be an array of three case matchers (i.e. match is done
   # with ===) that correspond to the top three levels of a domain name in
   # hierarchical order.
-  # blacklist = [
-  #   ['com', 'google', ['www', 'images', 'video']],
-  #   ['xxx', /./, /./]
-  # ]
+  blacklist = [
+    # ['com', 'google', /\A(www|images|video)\z/],
+    # ['xxx',      /./,                      /./]
+  ]
 
   # Cached hosts as arrays of hierarchical domains
   hosts = File.readlines('hosts.cache').map do |l|
