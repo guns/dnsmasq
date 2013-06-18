@@ -42,3 +42,69 @@ task :dump do
     }
   end
 end
+
+def blacklisted? blacklist, host
+  h0, h1, h2, _ = host
+  blacklist.each do |bhost|
+    b0, b1, b2, _ = bhost
+    case host.size
+    when 1 then return true if b0 === h0
+    when 2 then return true if b0 === h0 and b1 === h1
+    else        return true if b0 === h0 and b1 === h1 and b2 === h2
+    end
+  end
+  false
+end
+
+def name host
+  host.reverse.join '.'
+end
+
+desc 'Create a dnsmasq whitelist conf file from hosts.cache'
+task :whitelist do
+  require 'set'
+
+  # Host to direct whitelisted DNS queries
+  # nameserver = '192.168.1.1'
+
+  # Domains that should never enter the whitelist.
+  #
+  # Each entry must be an array of three case matchers (i.e. match is done
+  # with ===) that correspond to the top three levels of a domain name in
+  # hierarchical order.
+  # blacklist = [
+  #   ['com', 'google', ['www', 'images', 'video']],
+  #   ['xxx', /./, /./]
+  # ]
+
+  # Cached hosts as arrays of hierarchical domains
+  hosts = File.readlines('hosts.cache').map do |l|
+    l.strip.split.last.split('.').reverse
+  end
+
+  # Reduce cached hosts to a set of secondary domains. If the secondary domain
+  # is blacklisted and the tertiary domain is not, then the tertiary domain is
+  # added instead.
+  whitelist = hosts.reduce Set.new do |s, host|
+    # Don't add TLDs
+    if host.size < 2
+      warn "Rejecting #{name host}"
+      s
+    # Try the secondary first
+    elsif blacklisted? blacklist, host.take(2)
+      # Then try the tertiary (when in doubt, use brute force)
+      if blacklisted? blacklist, host.take(3)
+        warn "Rejecting #{name host}"
+        s
+      else
+        s << name(host.take 3)
+      end
+    else
+      s << name(host.take 2)
+    end
+  end
+
+  File.open 'whitelist.conf', 'w' do |f|
+    f.puts whitelist.map { |host| "server=/#{host}/#{nameserver}" }.sort
+  end
+end
