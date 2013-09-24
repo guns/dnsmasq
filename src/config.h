@@ -34,8 +34,8 @@
 #define HOSTSFILE "/etc/hosts"
 #define ETHERSFILE "/etc/ethers"
 #define DEFLEASE 3600 /* default lease time, 1 hour */
-#define CHUSER "nobody"
-#define CHGRP "nobody"
+#define CHUSER "dns"
+#define CHGRP "dns"
 #define TFTP_MAX_CONNECTIONS 50 /* max simultaneous connections */
 #define LOG_MAX 5 /* log-queue length */
 #define RANDFILE "/dev/urandom"
