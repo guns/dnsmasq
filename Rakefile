@@ -109,7 +109,7 @@ namespace :install do
   task :cache do
     dir = '/var/cache/dnsmasq'
     mkdir_p dir, :mode => 0700
-    chown 'dns', 'dns', dir
+    chown 'dnsmasq', 'dnsmasq', dir
     cp 'contrib/guns/cache/Rakefile', dir
   end
 end
