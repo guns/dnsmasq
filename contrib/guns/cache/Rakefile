@@ -85,7 +85,8 @@ task :whitelist do
   # Reduce cached hosts to a set of secondary domains. If the secondary domain
   # is blacklisted and the tertiary domain is not, then the tertiary domain is
   # added instead.
-  whitelist = hosts.reduce Set.new do |s, host|
+  oldlist = File.readlines('whitelist.conf').map { |l| l[%r{/(.*)/}, 1] }
+  whitelist = hosts.reduce Set.new(oldlist) do |s, host|
     # Don't add TLDs
     if host.size < 2
       warn "Rejecting #{name host}"
