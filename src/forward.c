@@ -328,8 +328,8 @@ static int forward_query(int udpfd, union mysockaddr *udpaddr,
       struct server *firstsentto = start;
       int forwarded = 0;
       
-      if (udpaddr && option_bool(OPT_ADD_MAC))
-	plen = add_mac(header, plen, ((char *) header) + PACKETSZ, udpaddr);
+      if (option_bool(OPT_ADD_MAC))
+	plen = add_mac(header, plen, ((char *) header) + PACKETSZ, &forward->source);
       
       while (1)
 	{ 
@@ -372,7 +372,7 @@ static int forward_query(int udpfd, union mysockaddr *udpaddr,
 		  if (option_bool(OPT_CONNTRACK))
 		    {
 		      unsigned int mark;
-		      if (get_incoming_mark(udpaddr, dst_addr, 0, &mark))
+		      if (get_incoming_mark(&forward->source, &forward->dest, 0, &mark))
 			setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(unsigned int));
 		    }
 #endif
@@ -788,8 +788,9 @@ void receive_query(struct listener *listen, time_t now)
       if (!iface_check(listen->family, &dst_addr, ifr.ifr_name, &auth_dns))
 	{
 	   if (!option_bool(OPT_CLEVERBIND))
-	     enumerate_interfaces(); 
-	   if (!loopback_exception(listen->fd, listen->family, &dst_addr, ifr.ifr_name))
+	     enumerate_interfaces(0); 
+	   if (!loopback_exception(listen->fd, listen->family, &dst_addr, ifr.ifr_name) &&
+	       !label_exception(if_index, listen->family, &dst_addr))
 	     return;
 	}
 
@@ -807,7 +808,7 @@ void receive_query(struct listener *listen, time_t now)
 	  
 	  /* interface may be new */
 	  if (!iface && !option_bool(OPT_CLEVERBIND))
-	    enumerate_interfaces(); 
+	    enumerate_interfaces(0); 
 	  
 	  for (iface = daemon->interfaces; iface; iface = iface->next)
 	    if (iface->addr.sa.sa_family == AF_INET &&
@@ -880,9 +881,12 @@ unsigned char *tcp_request(int confd, time_t now,
   unsigned short qtype;
   unsigned int gotname;
   unsigned char c1, c2;
-  /* Max TCP packet + slop */
-  unsigned char *packet = whine_malloc(65536 + MAXDNAME + RRFIXEDSZ);
-  struct dns_header *header;
+  /* Max TCP packet + slop + size */
+  unsigned char *packet = whine_malloc(65536 + MAXDNAME + RRFIXEDSZ + sizeof(u16));
+  unsigned char *payload = &packet[2];
+  /* largest field in header is 16-bits, so this is still sufficiently aligned */
+  struct dns_header *header = (struct dns_header *)payload;
+  u16 *length = (u16 *)packet;
   struct server *last_server;
   struct in_addr dst_addr_4;
   union mysockaddr peer_addr;
@@ -896,14 +900,12 @@ unsigned char *tcp_request(int confd, time_t now,
       if (!packet ||
 	  !read_write(confd, &c1, 1, 1) || !read_write(confd, &c2, 1, 1) ||
 	  !(size = c1 << 8 | c2) ||
-	  !read_write(confd, packet, size, 1))
+	  !read_write(confd, payload, size, 1))
        	return packet; 
   
       if (size < (int)sizeof(struct dns_header))
 	continue;
       
-      header = (struct dns_header *)packet;
-
       /* save state of "cd" flag in query */
       checking_disabled = header->hb4 & HB4_CD;
        
@@ -1020,12 +1022,9 @@ unsigned char *tcp_request(int confd, time_t now,
 #endif	
 			}
 		      
-		      c1 = size >> 8;
-		      c2 = size;
+		      *length = htons(size);
 		      
-		      if (!read_write(last_server->tcpfd, &c1, 1, 0) ||
-			  !read_write(last_server->tcpfd, &c2, 1, 0) ||
-			  !read_write(last_server->tcpfd, packet, size, 0) ||
+		      if (!read_write(last_server->tcpfd, packet, size + sizeof(u16), 0) ||
 			  !read_write(last_server->tcpfd, &c1, 1, 1) ||
 			  !read_write(last_server->tcpfd, &c2, 1, 1))
 			{
@@ -1035,7 +1034,7 @@ unsigned char *tcp_request(int confd, time_t now,
 			} 
 		      
 		      m = (c1 << 8) | c2;
-		      if (!read_write(last_server->tcpfd, packet, m, 1))
+		      if (!read_write(last_server->tcpfd, payload, m, 1))
 			return packet;
 		      
 		      if (!gotname)
@@ -1071,12 +1070,9 @@ unsigned char *tcp_request(int confd, time_t now,
 	  
       check_log_writer(NULL);
       
-      c1 = m>>8;
-      c2 = m;
-      if (m == 0 ||
-	  !read_write(confd, &c1, 1, 0) ||
-	  !read_write(confd, &c2, 1, 0) || 
-	  !read_write(confd, packet, m, 0))
+      *length = htons(m);
+           
+      if (m == 0 || !read_write(confd, packet, m + sizeof(u16), 0))
 	return packet;
     }
 }
@@ -1209,8 +1205,17 @@ struct frec *get_new_frec(time_t now, int *wait)
   /* none available, calculate time 'till oldest record expires */
   if (count > daemon->ftabsize)
     {
+      static time_t last_log = 0;
+      
       if (oldest && wait)
 	*wait = oldest->time + (time_t)TIMEOUT - now;
+      
+      if ((int)difftime(now, last_log) > 5)
+	{
+	  last_log = now;
+	  my_syslog(LOG_WARNING, _("Maximum number of concurrent DNS queries reached (max: %d)"), daemon->ftabsize);
+	}
+
       return NULL;
     }
   

@@ -338,7 +338,8 @@ by '/', like the --server syntax, eg.
 Don't poll /etc/resolv.conf for changes.
 .TP
 .B --clear-on-reload
-Whenever /etc/resolv.conf is re-read, clear the DNS cache.
+Whenever /etc/resolv.conf is re-read or the upstream servers are set
+via DBus, clear the DNS cache.
 This is useful when new nameservers may have different
 data than that held in cache.
 .TP
@@ -519,6 +520,22 @@ the name. More than one name may be associated with an interface
 address by repeating the flag; in that case the first instance is used
 for the reverse address-to-name mapping.
 .TP
+.B --synth-domain=<domain>,<address range>[,<prefix>]
+Create artificial A/AAAA and PTR records for an address range. The
+records use the address, with periods (or colons for IPv6) replaced
+with dashes.
+
+An example should make this clearer.
+.B --synth-domain=thekelleys.org.uk,192.168.0.0/24,internal-
+will result in a query for internal-192-168-0-56.thekelleys.org.uk returning
+192.168.0.56 and a reverse query vice versa. The same applies to IPv6,
+but IPv6 addresses may start with '::'
+but DNS labels may not start with '-' so in this case if no prefix is
+configured a zero is added in front of the label. ::1 becomes 0--1.
+
+The address range can be of the form
+<ip address>,<ip address> or <ip address>/<netmask>
+.TP
 .B --add-mac
 Add the MAC address of the requestor to DNS queries which are
 forwarded upstream. This may be used to DNS filtering by the upstream
@@ -556,13 +573,18 @@ If you use the first DNSSEC mode, validating resolvers in clients,
 this option is not required. Dnsmasq always returns all the data
 needed for a client to do validation itself. 
 .TP
-.B --auth-zone=<domain>[,<subnet>[,<subnet>.....]]
+.B --auth-zone=<domain>[,<subnet>[/<prefix length>][,<subnet>[/<prefix length>].....]]
 Define a DNS zone for which dnsmasq acts as authoritative server. Locally defined DNS records which are in the domain
-will be served, except that A and AAAA records must be in one of the
-specified subnets, or in a subnet corresponding to a contructed DHCP
-range. The subnet(s) are also used to define in-addr.arpa and
-ipv6.arpa domains which are served for reverse-DNS queries. For IPv4
-subnets, the prefix length is limited to the values 8, 16 or 24.
+will be served. A and AAAA records must be in one of the
+specified subnets, or in a subnet corresponding to a constructed DHCP
+range. (This can be overridden with 
+.B constructor-noauth:
+) The subnet(s) are also used to define in-addr.arpa and
+ipv6.arpa domains which are served for reverse-DNS queries. If not
+specified, the prefix length defaults to 24 for IPv4 and 64 for IPv6.
+For IPv4 subnets, the prefix length should be have the value 8, 16 or 24
+unless you are familiar with RFC 2317 and have arranged the
+in-addr.arpa delegation accordingly. 
 .TP
 .B --auth-soa=<serial>[,<hostmaster>[,<refresh>[,<retry>[,<expiry>]]]]
 Specify fields in the SOA record associated with authoritative
@@ -630,7 +652,26 @@ This forms a template which describes how to create ranges, based on the address
 
 .B --dhcp-range=::1,::400,constructor:eth0
 
-will look for addresses of the form <network>::1 on eth0 and then create a range from <network>::1 to <network>::400. If the interface is assigned more than one network, then the corresponding ranges will be automatically created, and then deprecated and finally removed again as the address is deprecated and then deleted. The interface name may have a final "*" wildcard.
+will look for addresses on
+eth0 and then create a range from <network>::1 to <network>::400. If
+the interface is assigned more than one network, then the
+corresponding ranges will be automatically created, and then
+deprecated and finally removed again as the address is deprecated and
+then deleted. The interface name may have a final "*" wildcard. Note
+that just any address on eth0 will not do: it must not be an
+autoconfigured or privacy address, or be deprecated.
+
+If a dhcp-range is only being used for stateless DHCP and/or SLAAC,
+then the address can be simply ::
+
+.B --dhcp-range=::,constructor:eth0
+
+
+There is a variant of the constructor: syntax using the keyword
+.B constructor-noauth.
+See 
+.B --auth-zone
+for an explanation of this.
 
 The optional 
 .B set:<tag> 
@@ -721,7 +762,8 @@ the same subnet as some valid dhcp-range.  For
 subnets which don't need a pool of dynamically allocated addresses,
 use the "static" keyword in the dhcp-range declaration.
 
-It is allowed to use client identifiers rather than
+It is allowed to use client identifiers (called client
+DUID in IPv6-land rather than
 hardware addresses to identify hosts by prefixing with 'id:'. Thus: 
 .B --dhcp-host=id:01:02:03:04,..... 
 refers to the host with client identifier 01:02:03:04. It is also
@@ -736,11 +778,12 @@ IPv6 addresses may contain only the host-identifier part:
 .B --dhcp-host=laptop,[::56]
 in which case they act as wildcards in constructed dhcp ranges, with
 the appropriate network part inserted. 
-Note that in IPv6 DHCP, the hardware address is not normally
-available, so a client must be identified by client-id (called client
-DUID in IPv6-land) or hostname. 
+Note that in IPv6 DHCP, the hardware address may not be
+available, though it normally is for direct-connected clients, or
+clients using DHCP relays which support RFC 6939.
 
-The special option id:* means "ignore any client-id 
+
+For DHCPv4, the  special option id:* means "ignore any client-id 
 and use MAC addresses only." This is useful when a client presents a client-id sometimes 
 but not others.
 
@@ -763,7 +806,7 @@ This is
 useful when there is another DHCP server on the network which should
 be used by some machines.
 
-The set:<tag> contruct sets the tag
+The set:<tag> construct sets the tag
 whenever this dhcp-host directive is in use. This can be used to 
 selectively send DHCP options just for this host. More than one tag
 can be set in a dhcp-host directive (but not in other places where
@@ -928,6 +971,38 @@ DHCP options. This make extra space available in the DHCP packet for
 options but can, rarely, confuse old or broken clients. This flag
 forces "simple and safe" behaviour to avoid problems in such a case.
 .TP
+.B --dhcp-relay=<local address>,<server address>[,<interface]
+Configure dnsmasq to do DHCP relay. The local address is an address
+allocated to an interface on the host running dnsmasq. All DHCP
+requests arriving on that interface will we relayed to a remote DHCP
+server at the server address. It is possible to relay from a single local
+address to multiple remote servers by using multiple dhcp-relay
+configs with the same local address and different server
+addresses. A server address must be an IP literal address, not a
+domain name. In the case of DHCPv6, the server address may be the
+ALL_SERVERS multicast address, ff05::1:3. In this case the interface
+must be given, not be wildcard, and is used to direct the multicast to the
+correct interface to reach the DHCP server. 
+
+Access control for DHCP clients has the same rules as for the DHCP
+server, see --interface, --except-interface, etc. The optional
+interface name in the dhcp-relay config has a different function: it
+controls on which interface DHCP replies from the server will be
+accepted. This is intended for configurations which have three
+interfaces: one being relayed from, a second connecting the DHCP
+server, and a third untrusted network, typically the wider
+internet. It avoids the possibility of spoof replies arriving via this
+third interface.
+
+It is allowed to have dnsmasq act as a DHCP server on one set of
+interfaces and relay from a disjoint set of interfaces. Note that
+whilst it is quite possible to write configurations which appear to
+act as a server and a relay on the same interface, this is not
+supported: the relay function will take precedence.
+
+Both DHCPv4 and DHCPv6 relay is supported. It's not possible to relay
+DHCPv4 to a DHCPv6 server or vice-versa.
+.TP
 .B \-U, --dhcp-vendorclass=set:<tag>,[enterprise:<IANA-enterprise number>,]<vendor-class>
 Map from a vendor-class string to a tag. Most DHCP clients provide a 
 "vendor class" which represents, in some sense, the type of host. This option 
@@ -956,7 +1031,7 @@ this to set a different printer server for hosts in the class
 "accounts" than for hosts in the class "engineering".
 .TP
 .B \-4, --dhcp-mac=set:<tag>,<MAC address>
-(IPv4 only) Map from a MAC address to a tag. The MAC address may include
+Map from a MAC address to a tag. The MAC address may include
 wildcards. For example
 .B --dhcp-mac=set:3com,01:34:23:*:*:*
 will set the tag "3com" for any host whose MAC address matches the pattern.
@@ -978,7 +1053,7 @@ agent ID and one provided by a relay agent, the tag is set.
 (IPv4 only) A normal DHCP relay agent is only used to forward the initial parts of
 a DHCP interaction to the DHCP server. Once a client is configured, it
 communicates directly with the server. This is undesirable if the
-relay agent is addding extra information to the DHCP packets, such as
+relay agent is adding extra information to the DHCP packets, such as
 that used by
 .B dhcp-circuitid
 and
@@ -995,7 +1070,7 @@ relays at those addresses are affected.
 Without a value, set the tag if the client sends a DHCP
 option of the given number or name. When a value is given, set the tag only if
 the option is sent and matches the value. The value may be of the form
-"01:ff:*:02" in which case the value must match (apart from widcards)
+"01:ff:*:02" in which case the value must match (apart from wildcards)
 but the option sent may have unmatched data past the end of the
 value. The value may also be of the same form as in 
 .B dhcp-option
@@ -1008,7 +1083,7 @@ will set the tag "efi-ia32" if the the number 6 appears in the list of
 architectures sent by the client in option 93. (See RFC 4578 for
 details.)  If the value is a string, substring matching is used.
 
-The special form with vi-encap:<enterpise number> matches against
+The special form with vi-encap:<enterprise number> matches against
 vendor-identifying vendor classes for the specified enterprise. Please
 see RFC 3925 for more details of these rare and interesting beasts.
 .TP
@@ -1036,7 +1111,7 @@ dhcp-host configuration in dnsmasq and the contents of /etc/hosts and
 .TP
 .B --dhcp-generate-names=tag:<tag>[,tag:<tag>]
 (IPv4 only) Generate a name for DHCP clients which do not otherwise have one,
-using the MAC address expressed in hex, seperated by dashes. Note that
+using the MAC address expressed in hex, separated by dashes. Note that
 if a host provides a name, it will be used by preference to this,
 unless 
 .B --dhcp-ignore-names 
@@ -1113,7 +1188,7 @@ timeout has elapsed with no keyboard input, the first available menu
 option will be automatically executed. If the timeout is zero then the first available menu
 item will be executed immediately. If 
 .B pxe-prompt
-is ommitted the system will wait for user input if there are multiple
+is omitted the system will wait for user input if there are multiple
 items in the menu, but boot immediately if
 there is only one. See
 .B pxe-service 
@@ -1262,7 +1337,7 @@ every call to the script.
 DNSMASQ_IAID containing the IAID for the lease. If the lease is a
 temporary allocation, this is prefixed to 'T'.
 
-
+DNSMASQ_MAC containing the MAC address of the client, if known.
 
 Note that the supplied hostname, vendorclass and userclass data is
 only  supplied for
@@ -1412,7 +1487,7 @@ In the default mode, dnsmasq inserts the unqualified names of
 DHCP clients into the DNS. For this reason, the names must be unique,
 even if two clients which have the same name are in different
 domains. If a second DHCP client appears which has the same name as an
-existing client, the name is transfered to the new client. If 
+existing client, the name is transferred to the new client. If 
 .B --dhcp-fqdn
 is set, this behaviour changes: the unqualified name is no longer
 put in the DNS, only the qualified name. Two DHCP clients with the
@@ -1450,11 +1525,18 @@ the relevant link-local address of the machine running dnsmasq is sent
 as recursive DNS server. If provided, the DHCPv6 options dns-server and
 domain-search are used for RDNSS and DNSSL.
 .TP
-.B --enable-tftp
+.B --force-fast-ra
+Normally, dnsmasq advertises a new IPv6 prefix frequently (every 10 seconds or so) for the first minute, and then
+drops back to sending "maintenance" advertisements every 10 minutes or so. This option forces dnsmasq to be always in 
+frequent RA mode. It's a bug workaround for mobile devices which go deaf to RAs during sleep and therefore 
+lose conectivity; with frequent RAs they recover in a reasonable time after wakeup.
+.TP
+.B --enable-tftp[=<interface>[,<interface>]]
 Enable the TFTP server function. This is deliberately limited to that
 needed to net-boot a client. Only reading is allowed; the tsize and
 blksize extensions are supported (tsize is only supported in octet
-mode). 
+mode). Without an argument, the TFTP service is provided to the same set of interfaces as DHCP service. 
+If the list of interfaces is provided, that defines which interfaces recieve TFTP service.
 .TP
 .B --tftp-root=<directory>[,<interface>]
 Look for files to transfer using TFTP relative to the given
@@ -1666,7 +1748,7 @@ used to allocate the address, one from any matching
 The tag "bootp" is set for BOOTP requests, and a tag whose name is the 
 name of the interface on which the request arrived is also set.
 
-Any configuration lines which includes one or more tag:<tag> contructs
+Any configuration lines which include one or more tag:<tag> constructs
 will only be valid if all that tags are matched in the set derived
 above. Typically this is dhcp-option.
 .B dhcp-option 
