@@ -1,0 +1,15 @@
+post_install() {
+    if ! getent passwd dnsmasq &>/dev/null; then
+        useradd -r -U -c "Local DNS Resolver" -d / -s /usr/bin/nologin dnsmasq
+    fi
+}
+
+post_upgrade() {
+    post_install
+}
+
+post_remove() {
+    getent passwd dnsmasq &>/dev/null && userdel  dnsmasq
+    getent group  dnsmasq &>/dev/null && groupdel dnsmasq
+    :
+}
