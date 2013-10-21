@@ -357,29 +357,30 @@ size_t answer_auth(struct dns_header *header, char *limit, size_t qlen, time_t n
 	 flag = F_IPV6;
 #endif
        
-       for (intr = daemon->int_names; intr; intr = intr->next)
-	 if (hostname_isequal(name, intr->name))
-	   {
-	     struct addrlist *addrlist;
-
-	     addrlist = intr->addr4;
+       if (flag)
+	 for (intr = daemon->int_names; intr; intr = intr->next)
+	   if (hostname_isequal(name, intr->name))
+	     {
+	       struct addrlist *addrlist;
+	       
+	       addrlist = intr->addr4;
 #ifdef HAVE_IPV6
-	     if (qtype == T_AAAA)
-	       addrlist = intr->addr6;
+	       if (qtype == T_AAAA)
+		 addrlist = intr->addr6;
 #endif	
-	     nxdomain = 0;
-	
-	     for (; addrlist; addrlist = addrlist->next)  
-	       if (local_query || filter_constructed_dhcp(zone, flag, &addrlist->addr))
-		 {
-		   found = 1;
-		   log_query(F_FORWARD | F_CONFIG | flag, name, &addrlist->addr, NULL);
-		   if (add_resource_record(header, limit, &trunc, nameoffset, &ansp, 
-					   daemon->auth_ttl, NULL, qtype, C_IN, 
-					   qtype == T_A ? "4" : "6", &addrlist->addr))
-		     anscount++;
-		 }
-	   }
+	       nxdomain = 0;
+	       
+	       for (; addrlist; addrlist = addrlist->next)  
+		 if (local_query || filter_constructed_dhcp(zone, flag, &addrlist->addr))
+		   {
+		     found = 1;
+		     log_query(F_FORWARD | F_CONFIG | flag, name, &addrlist->addr, NULL);
+		     if (add_resource_record(header, limit, &trunc, nameoffset, &ansp, 
+					     daemon->auth_ttl, NULL, qtype, C_IN, 
+					     qtype == T_A ? "4" : "6", &addrlist->addr))
+		       anscount++;
+		   }
+	     }
        
        for (a = daemon->cnames; a; a = a->next)
 	 if (hostname_isequal(name, a->alias) )
@@ -406,7 +407,7 @@ size_t answer_auth(struct dns_header *header, char *limit, size_t qlen, time_t n
 	  
 	  if (qtype == T_SOA)
 	    {
-	      soa = 1; /* inhibits auth section */
+	      auth = soa = 1; /* inhibits auth section */
 	      found = 1;
 	      log_query(F_RRNAME | F_AUTH, zone->domain, NULL, "<SOA>");
 	    }
@@ -439,6 +440,7 @@ size_t answer_auth(struct dns_header *header, char *limit, size_t qlen, time_t n
 		  return 0;
 		}
 	       	      
+	      auth = 1;
 	      soa = 1; /* inhibits auth section */
 	      ns = 1; /* ensure we include NS records! */
 	      axfr = 1;
@@ -448,6 +450,7 @@ size_t answer_auth(struct dns_header *header, char *limit, size_t qlen, time_t n
 	    }
       	  else if (qtype == T_NS)
 	    {
+	      auth = 1;
 	      ns = 1; /* inhibits auth section */
 	      found = 1;
 	      log_query(F_RRNAME | F_AUTH, zone->domain, NULL, "<NS>"); 
@@ -790,7 +793,7 @@ size_t answer_auth(struct dns_header *header, char *limit, size_t qlen, time_t n
   if (trunc)
     header->hb3 |= HB3_TC;
   
-  if (anscount == 0 && auth && nxdomain)
+  if ((auth || local_query) && nxdomain)
     SET_RCODE(header, NXDOMAIN);
   else
     SET_RCODE(header, NOERROR); /* no error */
