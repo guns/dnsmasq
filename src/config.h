@@ -34,8 +34,8 @@
 #define HOSTSFILE "/etc/hosts"
 #define ETHERSFILE "/etc/ethers"
 #define DEFLEASE 3600 /* default lease time, 1 hour */
-#define CHUSER "dns"
-#define CHGRP "dns"
+#define CHUSER "dnsmasq"
+#define CHGRP "dnsmasq"
 #define TFTP_MAX_CONNECTIONS 50 /* max simultaneous connections */
 #define LOG_MAX 5 /* log-queue length */
 #define RANDFILE "/dev/urandom"
@@ -128,16 +128,16 @@ RESOLVFILE
 /* The default set of options to build. Built with these options, dnsmasq
    has no library dependencies other than libc */
 
-#define HAVE_DHCP
-#define HAVE_DHCP6 
-#define HAVE_TFTP
-#define HAVE_SCRIPT
-#define HAVE_AUTH
-#define HAVE_IPSET 
+/* #define HAVE_DHCP */
+/* #define HAVE_DHCP6 */
+/* #define HAVE_TFTP */
+/* #define HAVE_SCRIPT */
+/* #define HAVE_AUTH */
+/* #define HAVE_IPSET */
 /* #define HAVE_LUASCRIPT */
 /* #define HAVE_BROKEN_RTC */
 /* #define HAVE_DBUS */
-/* #define HAVE_IDN */
+#define HAVE_IDN
 /* #define HAVE_CONNTRACK */
 
 
@@ -157,9 +157,9 @@ RESOLVFILE
 
 #ifndef CONFFILE
 #   if defined(__FreeBSD__)
-#      define CONFFILE "/usr/local/etc/dnsmasq.conf"
+#      define CONFFILE "/usr/local/etc/dnsmasq/dnsmasq.conf"
 #   else
-#      define CONFFILE "/etc/dnsmasq.conf"
+#      define CONFFILE "/etc/dnsmasq/dnsmasq.conf"
 #   endif
 #endif
 

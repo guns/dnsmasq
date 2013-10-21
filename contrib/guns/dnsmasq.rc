@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 NAME='dnsmasq'
-PROGRAM="<%= @prefix || '/opt/dnsmasq' %>/sbin/$NAME"
+PROGRAM="%%BINDIR%%/$NAME"
 PIDFILE="/var/run/$NAME.pid"
 OPTIONS=()
 

@@ -5,8 +5,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStartPre=<%= @prefix || '/opt/dnsmasq' %>/sbin/dnsmasq --test
-ExecStart=<%= @prefix || '/opt/dnsmasq' %>/sbin/dnsmasq --keep-in-foreground
+ExecStartPre=%%BINDIR%%/dnsmasq --test
+ExecStart=%%BINDIR%%/dnsmasq --keep-in-foreground
 ExecReload=/bin/kill -HUP $MAINPID
 
 [Install]

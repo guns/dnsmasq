@@ -18,18 +18,21 @@
 
 # Variables you may well want to override.
 
-# WARNING: PREFIX must be defined in the environment! (just use the rake tasks)
-# PREFIX        = /usr/local
+PREFIX        = /opt/dnsmasq
 BINDIR        = $(PREFIX)/sbin
 MANDIR        = $(PREFIX)/share/man
 LOCALEDIR     = $(PREFIX)/share/locale
 BUILDDIR      = $(SRC)
 DESTDIR       = 
 CFLAGS        = -Wall -W -O2
-# LDFLAGS       = 
-# COPTS         = 
+LDFLAGS       = 
+COPTS         = 
 RPM_OPT_FLAGS = 
 LIBS          = 
+CONFDIR       = /etc/dnsmasq
+SHARECONFDIR  = $(PREFIX)/share/conf
+RCDIR         = $(PREFIX)/etc/rc.d
+SERVICEDIR    = $(PREFIX)/lib/systemd/system
 
 #################################################################
 
@@ -71,6 +74,8 @@ objs = cache.o rfc1035.o util.o option.o forward.o network.o \
 hdrs = dnsmasq.h config.h dhcp-protocol.h dhcp6-protocol.h \
        dns-protocol.h radv-protocol.h
 
+_all : all-i18n
+
 all : $(BUILDDIR)
 	@cd $(BUILDDIR) && $(MAKE) \
  top="$(top)" \
@@ -87,7 +92,7 @@ clean : mostly_clean
 	rm -f core */core
 	rm -f *~ contrib/*/*~ */*~
 
-install : all install-common
+install : all-i18n install-i18n install-guns
 
 install-common :
 	$(INSTALL) -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(MANDIR)/man8
@@ -156,3 +161,18 @@ dnsmasq.pot : $(objs:.o=.c) $(hdrs)
 	$(MSGMERGE) -o - $(top)/$(PO)/$*.po dnsmasq.pot | $(MSGFMT) -o $*.mo -
 
 .PHONY : all clean mostly_clean install install-common all-i18n install-i18n merge baseline bloatcheck
+
+install-guns : all-i18n
+	$(INSTALL) -d $(DESTDIR)$(CONFDIR) $(DESTDIR)$(SHARECONFDIR) $(DESTDIR)$(RCDIR) $(DESTDIR)$(SERVICEDIR)
+	for f in contrib/guns/conf/*; do \
+		test -e $(DESTDIR)$(CONFDIR)/`basename $$f` || $(INSTALL) -m 0644 $$f $(DESTDIR)$(CONFDIR); \
+		$(INSTALL) -m 0644 $$f $(DESTDIR)$(SHARECONFDIR); \
+	done
+	if test -n "$(RCDIR)"; then \
+		$(INSTALL) -d $(DESTDIR)$(RCDIR); \
+		sed 's:%%BINDIR%%:$(BINDIR):g' contrib/guns/dnsmasq.rc > $(DESTDIR)$(RCDIR)/dnsmasq.rc; \
+	fi
+	if test -n "$(SERVICEDIR)"; then \
+		$(INSTALL) -d $(DESTDIR)$(SERVICEDIR); \
+		sed 's:%%BINDIR%%:$(BINDIR):g' contrib/guns/dnsmasq.service > $(DESTDIR)$(SERVICEDIR)/dnsmasq.service; \
+	fi
