@@ -162,7 +162,7 @@ dnsmasq.pot : $(objs:.o=.c) $(hdrs)
 
 .PHONY : all clean mostly_clean install install-common all-i18n install-i18n merge baseline bloatcheck
 
-install-guns : all-i18n
+install-guns :
 	$(INSTALL) -d $(DESTDIR)$(CONFDIR) $(DESTDIR)$(SHARECONFDIR) $(DESTDIR)$(RCDIR) $(DESTDIR)$(SERVICEDIR)
 	for f in contrib/guns/conf/*; do \
 		test -e $(DESTDIR)$(CONFDIR)/`basename $$f` || $(INSTALL) -m 0644 $$f $(DESTDIR)$(CONFDIR); \
