@@ -1862,9 +1862,12 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 		      else
 			ret_err(gen_err);
 		    }
-		  else  
+		  else
 		    {
+		      char *prefstr;
 		      arg = split(comma);
+		      prefstr = split(arg);
+
 		      if (inet_pton(AF_INET, comma, &new->start))
 			{
 			  new->is6 = 0;
@@ -1885,6 +1888,13 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 #endif
 		      else 
 			ret_err(gen_err);
+
+		      if (option != 's' && prefstr)
+			{
+			  if (!(new->prefix = canonicalise_opt(prefstr)) ||
+			      strlen(new->prefix) > MAXLABEL - INET_ADDRSTRLEN)
+			    ret_err(_("bad prefix"));
+			}
 		    }
 
 		  new->domain = d;
