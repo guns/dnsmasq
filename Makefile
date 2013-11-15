@@ -30,7 +30,7 @@ COPTS         =
 RPM_OPT_FLAGS = 
 LIBS          = 
 CONFDIR       = /etc/dnsmasq
-SHARECONFDIR  = $(PREFIX)/share/conf
+SHARECONFDIR  = $(PREFIX)/share/dnsmasq
 RCDIR         = $(PREFIX)/etc/rc.d
 SERVICEDIR    = $(PREFIX)/lib/systemd/system
 
@@ -163,10 +163,13 @@ dnsmasq.pot : $(objs:.o=.c) $(hdrs)
 .PHONY : all clean mostly_clean install install-common all-i18n install-i18n merge baseline bloatcheck
 
 install-guns :
-	$(INSTALL) -d $(DESTDIR)$(CONFDIR) $(DESTDIR)$(SHARECONFDIR) $(DESTDIR)$(RCDIR) $(DESTDIR)$(SERVICEDIR)
+	$(INSTALL) -d $(DESTDIR)$(CONFDIR) $(DESTDIR)$(SHARECONFDIR)/cache $(DESTDIR)$(RCDIR) $(DESTDIR)$(SERVICEDIR)
 	for f in contrib/guns/conf/*; do \
 		test -e $(DESTDIR)$(CONFDIR)/`basename $$f` || $(INSTALL) -m 0644 $$f $(DESTDIR)$(CONFDIR); \
 		$(INSTALL) -m 0644 $$f $(DESTDIR)$(SHARECONFDIR); \
+	done
+	for f in contrib/guns/cache/*; do\
+		$(INSTALL) -m 0644 $$f $(DESTDIR)$(SHARECONFDIR)/cache; \
 	done
 	if test -n "$(RCDIR)"; then \
 		$(INSTALL) -d $(DESTDIR)$(RCDIR); \

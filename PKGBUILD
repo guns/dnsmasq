@@ -1,6 +1,6 @@
 # Maintainer: Sung Pae <self@sungpae.com>
 pkgname=dnsmasq-guns
-pkgver=v2.67rc4.57.g1a288f1
+pkgver=v2.68test1.67.g73fc282
 pkgrel=1
 pkgdesc="Sung Pae's dnsmasq build"
 arch=('x86_64')
