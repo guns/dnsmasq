@@ -18,7 +18,7 @@
 
 #ifdef HAVE_AUTH
 
-static struct addrlist *filter_zone(struct auth_zone *zone, int flag, struct all_addr *addr_u)
+static struct addrlist *find_subnet(struct auth_zone *zone, int flag, struct all_addr *addr_u)
 {
   struct addrlist *subnet;
 
@@ -43,6 +43,15 @@ static struct addrlist *filter_zone(struct auth_zone *zone, int flag, struct all
 
     }
   return NULL;
+}
+
+static int filter_zone(struct auth_zone *zone, int flag, struct all_addr *addr_u)
+{
+  /* No zones specified, no filter */
+  if (!zone->subnet)
+    return 1;
+  
+  return find_subnet(zone, flag, addr_u) != NULL;
 }
 
 int in_zone(struct auth_zone *zone, char *name, char **cut)
@@ -130,7 +139,7 @@ size_t answer_auth(struct dns_header *header, char *limit, size_t qlen, time_t n
 	  if (!local_query)
 	    {
 	      for (zone = daemon->auth_zones; zone; zone = zone->next)
-		if ((subnet = filter_zone(zone, flag, &addr)))
+		if ((subnet = find_subnet(zone, flag, &addr)))
 		  break;
 	      
 	      if (!zone)
@@ -660,16 +669,16 @@ size_t answer_auth(struct dns_header *header, char *limit, size_t qlen, time_t n
 		  *cut = 0;
 		
 		for (addrlist = intr->addr; addrlist; addrlist = addrlist->next) 
-		  if (!(subnet->flags & ADDRLIST_IPV6) &&
-		      (local_query || filter_zone(zone, F_IPV4,  &addrlist->addr)) && 
+		  if (!(addrlist->flags & ADDRLIST_IPV6) &&
+		      (local_query || filter_zone(zone, F_IPV4, &addrlist->addr)) && 
 		      add_resource_record(header, limit, &trunc, -axfroffset, &ansp, 
 					  daemon->auth_ttl, NULL, T_A, C_IN, "4", cut ? intr->name : NULL, &addrlist->addr))
 		    anscount++;
 		
 #ifdef HAVE_IPV6
 		for (addrlist = intr->addr; addrlist; addrlist = addrlist->next) 
-		  if ((subnet->flags & ADDRLIST_IPV6) && 
-		      (local_query || filter_zone(zone, F_IPV6,  &addrlist->addr)) &&
+		  if ((addrlist->flags & ADDRLIST_IPV6) && 
+		      (local_query || filter_zone(zone, F_IPV6, &addrlist->addr)) &&
 		      add_resource_record(header, limit, &trunc, -axfroffset, &ansp, 
 					  daemon->auth_ttl, NULL, T_AAAA, C_IN, "6", cut ? intr->name : NULL, &addrlist->addr))
 		    anscount++;
