@@ -1,6 +1,6 @@
 # Maintainer: Sung Pae <self@sungpae.com>
 pkgname=dnsmasq-guns
-pkgver=v2.68test1.67.g73fc282
+pkgver=v2.68rc5.63.gf2588a1
 pkgrel=1
 pkgdesc="Sung Pae's dnsmasq build"
 arch=('x86_64')
@@ -11,7 +11,7 @@ backup=('etc/dnsmasq/Rakefile'
         'etc/dnsmasq/dnsmasq.conf'
         'etc/dnsmasq/hosts'
         'etc/dnsmasq/resolv.conf')
-depends=('glibc')
+depends=('glibc' 'libidn')
 install=dnsmasq.install
 makedepends=('git')
 provides=('dnsmasq')

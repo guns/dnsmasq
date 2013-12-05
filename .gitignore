@@ -12,3 +12,5 @@ debian/files
 debian/substvars
 debian/utils-substvars
 debian/utils/
+/*.tar.xz*
+/pkg
