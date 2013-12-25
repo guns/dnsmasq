@@ -4,20 +4,10 @@
 
 task :default => :update
 
-desc 'Create IPv6 entries for all 127.0.0.1 entries in the hosts file'
-task :localhosts6 do
-  require 'set'
-
-  hosts = File.readlines 'hosts'
-  ipv6hosts = Set.new hosts.grep(/\A\s*::1\s+(.*)\s*/) { $1 }
-
-  buf = hosts.map do |line|
-    match = line.match /\A\s*127\.0\.0\.1\s+(.*)\s*/
-    next line if match.nil? or ipv6hosts.include? match[1]
-    line + line.sub(/\A(\s*)127\.0\.0\.1/, '\1::1      ')
-  end.join
-
-  File.open('hosts', 'w') { |f| f.write buf }
+def add_ipv6 hostbuf
+  invalid = Regexp.quote '0.0.0.0'
+  local = Regexp.quote '127.0.0.1'
+  hostbuf.gsub /^(?:#{invalid}|#{local})\s+(.*)$/, "0.0.0.0 \\1\n::      \\1"
 end
 
 desc 'Update adblock domains in hosts'
@@ -34,9 +24,7 @@ task :update do
     adhosts = Net::HTTP.get(URI.parse url).gsub /\r\n/, "\n"
 
     File.open 'hosts', 'w' do |f|
-      f.puts hosts, adhosts
+      f.puts hosts, add_ipv6(adhosts)
     end
-
-    Rake::Task[:localhosts6].invoke
   end
 end
