@@ -13,7 +13,7 @@ task :dump do
 
   # Create a table of hostnames to addresses, eliding any aliases of localhost
   parse_hosts = lambda do |buf|
-    hosts, locals = {}, %w[127.0.0.1 ::1]
+    hosts, locals = {}, Set.new(%w[127.0.0.1 ::1 0.0.0.0 ::])
     buf.lines.each do |l|
       addr, host = l.chomp.split "\t"
       next if locals.include? addr
