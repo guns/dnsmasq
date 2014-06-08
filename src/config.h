@@ -140,7 +140,7 @@ RESOLVFILE
 /* #define HAVE_TFTP */
 /* #define HAVE_SCRIPT */
 /* #define HAVE_AUTH */
-/* #define HAVE_IPSET */
+#define HAVE_IPSET
 
 /* Build options which require external libraries.
    
