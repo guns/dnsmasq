@@ -6,8 +6,8 @@ After=network.target
 [Service]
 Type=simple
 ExecStartPre=%%BINDIR%%/dnsmasq --test
-ExecStart=%%BINDIR%%/dnsmasq --keep-in-foreground
-ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=%%BINDIR%%/dnsmasq --keep-in-foreground --listen-address=127.0.0.1
+ExecReload=/usr/bin/kill -HUP $MAINPID
 
 [Install]
 WantedBy=multi-user.target
