@@ -313,8 +313,8 @@ static int dhcp6_no_relay(struct state *state, int msg_type, void *inbuff, size_
   else if (msg_type != DHCP6IREQ)
     return 0;
 
-  /* server-id must match except for SOLICIT and CONFIRM messages */
-  if (msg_type != DHCP6SOLICIT && msg_type != DHCP6CONFIRM && msg_type != DHCP6IREQ &&
+  /* server-id must match except for SOLICIT, CONFIRM and REBIND messages */
+  if (msg_type != DHCP6SOLICIT && msg_type != DHCP6CONFIRM && msg_type != DHCP6IREQ && msg_type != DHCP6REBIND &&
       (!(opt = opt6_find(state->packet_options, state->end, OPTION6_SERVER_ID, 1)) ||
        opt6_len(opt) != daemon->duid_len ||
        memcmp(opt6_ptr(opt, 0), daemon->duid, daemon->duid_len) != 0))
@@ -328,6 +328,7 @@ static int dhcp6_no_relay(struct state *state, int msg_type, void *inbuff, size_
       (msg_type == DHCP6REQUEST || msg_type == DHCP6RENEW || msg_type == DHCP6RELEASE || msg_type == DHCP6DECLINE))
     
     {  
+      *outmsgtypep = DHCP6REPLY;
       o1 = new_opt6(OPTION6_STATUS_CODE);
       put_opt6_short(DHCP6USEMULTI);
       put_opt6_string("Use multicast");
@@ -1039,6 +1040,8 @@ static int dhcp6_no_relay(struct state *state, int msg_type, void *inbuff, size_
       
     case DHCP6CONFIRM:
       {
+	int good_addr = 0;
+
 	/* set reply message type */
 	*outmsgtypep = DHCP6REPLY;
 	
@@ -1063,9 +1066,14 @@ static int dhcp6_no_relay(struct state *state, int msg_type, void *inbuff, size_
 		    return 1;
 		  }
 
+		good_addr = 1;
 		log6_quiet(state, "DHCPREPLY", req_addr, state->hostname);
 	      }
 	  }	 
+	
+	/* No addresses, no reply: RFC 3315 18.2.2 */
+	if (!good_addr)
+	  return 0;
 
 	o1 = new_opt6(OPTION6_STATUS_CODE);
 	put_opt6_short(DHCP6SUCCESS );
@@ -1232,6 +1240,12 @@ static int dhcp6_no_relay(struct state *state, int msg_type, void *inbuff, size_
 	      }
 	    
 	  }
+
+	/* We must anwser with 'success' in global section anyway */
+	o1 = new_opt6(OPTION6_STATUS_CODE);
+	put_opt6_short(DHCP6SUCCESS);
+	put_opt6_string(_("success"));
+	end_opt6(o1);
 	break;
       }
 
