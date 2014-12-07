@@ -4,10 +4,14 @@
 
 task :default => :update
 
-def add_ipv6 hostbuf
+def add_ipv6 hostsbuf
   invalid = Regexp.quote '0.0.0.0'
   local = Regexp.quote '127.0.0.1'
-  hostbuf.gsub /^(?:#{invalid}|#{local})\s+(.*)$/, "0.0.0.0 \\1\n::      \\1"
+  hostsbuf.gsub /^(?:#{invalid}|#{local})\s+(.*)$/, "0.0.0.0 \\1\n::      \\1"
+end
+
+def disable_localhost_aliases hostsbuf
+  hostsbuf.gsub /^\s*([^#].*\blocalhost\b.*)$/, '# \1'
 end
 
 desc 'Update adblock domains in hosts'
@@ -24,7 +28,7 @@ task :update do
     adhosts = Net::HTTP.get(URI.parse url).gsub /\r\n/, "\n"
 
     File.open 'hosts', 'w' do |f|
-      f.puts hosts, add_ipv6(adhosts)
+      f.puts hosts, add_ipv6(disable_localhost_aliases(adhosts))
     end
   end
 end
