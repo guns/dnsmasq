@@ -1,12 +1,12 @@
 # Maintainer: Sung Pae <self@sungpae.com>
-pkgname=dnsmasq-guns
+pkgname=dnsmasq-nerv
 pkgver=
 pkgrel=1
-pkgdesc="Sung Pae's dnsmasq build"
+pkgdesc="Custom dnsmasq build"
 arch=('x86_64')
 url="https://github.com/guns/dnsmasq"
 license=('GPL')
-groups=('guns')
+groups=('nerv')
 backup=('etc/dnsmasq/Rakefile'
         'etc/dnsmasq/dnsmasq.conf'
         'etc/dnsmasq/hosts'
@@ -16,6 +16,7 @@ install=dnsmasq.install
 makedepends=('git')
 provides=('dnsmasq')
 conflicts=('dnsmasq')
+replaces=('dnsmasq-guns')
 
 envmake() {
     DESTDIR="$pkgdir/" PREFIX=/usr BINDIR=/usr/bin RCDIR= \
