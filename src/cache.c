@@ -1422,11 +1422,12 @@ void dump_cache(time_t now)
 	    if (strlen(n) == 0 && !(cache->flags & F_REVERSE))
 	      n = "<Root>";
 	    p += sprintf(p, "%-40.40s ", n);
-	    if ((cache->flags & F_CNAME) && !is_outdated_cname_pointer(cache))
+	    if ((cache->flags & F_CNAME))
 	    {
-	      a = cache_get_cname_target(cache);
+	      if (!is_outdated_cname_pointer(cache))
+		a = cache_get_cname_target(cache);
 	      if (dumping_hosts)
-		fprintf(hosts_cache, "#%s\t%s\n", a, cache_get_name(cache));
+		fprintf(hosts_cache, "#%s\t%s\n", cache_get_cname_target(cache), n);
 	    }
 #ifdef HAVE_DNSSEC
 	    else if (cache->flags & F_DS)
@@ -1453,7 +1454,7 @@ void dump_cache(time_t now)
 		  inet_ntop(AF_INET6, &cache->addr.addr, a, ADDRSTRLEN);
 #endif
 		if (dumping_hosts)
-		  fprintf(hosts_cache, "%s\t%s\n", a, cache_get_name(cache));
+		  fprintf(hosts_cache, "%s\t%s\n", a, n);
 	      }
 
 	    if (cache->flags & F_IPV4)
