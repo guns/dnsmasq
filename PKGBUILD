@@ -7,9 +7,7 @@ arch=('x86_64')
 url="https://github.com/guns/dnsmasq"
 license=('GPL')
 groups=('nerv')
-backup=('etc/dnsmasq/Rakefile'
-        'etc/dnsmasq/dnsmasq.conf'
-        'etc/dnsmasq/hosts'
+backup=('etc/dnsmasq/dnsmasq.conf'
         'etc/dnsmasq/resolv.conf')
 depends=('glibc' 'libidn')
 install=dnsmasq.install
