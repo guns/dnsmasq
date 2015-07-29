@@ -117,6 +117,7 @@ typedef unsigned long long u64;
 #include <sys/uio.h>
 #include <syslog.h>
 #include <dirent.h>
+#include <utime.h>
 #ifndef HAVE_LINUX_NETWORK
 #  include <net/if_dl.h>
 #endif
@@ -992,6 +993,7 @@ extern struct daemon {
 #endif
 #ifdef HAVE_DNSSEC
   struct ds_config *ds;
+  int back_to_the_future;
   char *timestamp_file;
 #endif
   char *hosts_cache;

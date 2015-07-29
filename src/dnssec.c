@@ -34,8 +34,6 @@
 #include <nettle/dsa-compat.h>
 #endif
 
-#include <utime.h>
-
 #define SERIAL_UNDEF  -100
 #define SERIAL_EQ        0
 #define SERIAL_LT       -1
@@ -427,13 +425,12 @@ static int serial_compare_32(unsigned long s1, unsigned long s2)
 */
 
 static time_t timestamp_time;
-static int back_to_the_future;
 
 int setup_timestamp(void)
 {
   struct stat statbuf;
   
-  back_to_the_future = 0;
+  daemon->back_to_the_future = 0;
   
   if (!daemon->timestamp_file)
     return 0;
@@ -447,7 +444,7 @@ int setup_timestamp(void)
 	  /* time already OK, update timestamp, and do key checking from the start. */
 	  if (utime(daemon->timestamp_file, NULL) == -1)
 	    my_syslog(LOG_ERR, _("failed to update mtime on %s: %s"), daemon->timestamp_file, strerror(errno));
-	  back_to_the_future = 1;
+	  daemon->back_to_the_future = 1;
 	  return 0;
 	}
       return 1;
@@ -487,17 +484,17 @@ static int check_date_range(unsigned long date_start, unsigned long date_end)
      and start checking keys */
   if (daemon->timestamp_file)
     {
-      if (back_to_the_future == 0 && difftime(timestamp_time, curtime) <= 0)
+      if (daemon->back_to_the_future == 0 && difftime(timestamp_time, curtime) <= 0)
 	{
 	  if (utime(daemon->timestamp_file, NULL) != 0)
 	    my_syslog(LOG_ERR, _("failed to update mtime on %s: %s"), daemon->timestamp_file, strerror(errno));
 	  
-	  back_to_the_future = 1;	
+	  daemon->back_to_the_future = 1;
 	  set_option_bool(OPT_DNSSEC_TIME);
 	  queue_event(EVENT_RELOAD); /* purge cache */
 	} 
 
-      if (back_to_the_future == 0)
+      if (daemon->back_to_the_future == 0)
 	return 1;
     }
   else if (option_bool(OPT_DNSSEC_TIME))
@@ -1226,16 +1223,20 @@ int dnssec_validate_ds(time_t now, struct dns_header *header, size_t plen, char 
   if (val == STAT_INSECURE)
     val = STAT_BOGUS;
 
-  if (val == STAT_NO_SIG)
-    return val;
-  
   p = (unsigned char *)(header+1);
   extract_name(header, plen, &p, name, 1, 4);
   p += 4; /* qtype, qclass */
   
   if (!(p = skip_section(p, ntohs(header->ancount), header, plen)))
     val = STAT_BOGUS;
-  
+   
+  /* If we return STAT_NO_SIG, name contains the name of the DS query */
+  if (val == STAT_NO_SIG)
+    {
+      *keyname = 0;
+      return val;
+    }  
+
   /* If the key needed to validate the DS is on the same domain as the DS, we'll
      loop getting nowhere. Stop that now. This can happen of the DS answer comes
      from the DS's zone, and not the parent zone. */
