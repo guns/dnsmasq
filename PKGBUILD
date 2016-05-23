@@ -1,6 +1,6 @@
 # Maintainer: Sung Pae <self@sungpae.com>
 pkgname=dnsmasq-nerv
-pkgver=
+pkgver=0
 pkgrel=1
 pkgdesc="Custom dnsmasq build"
 arch=('x86_64')
