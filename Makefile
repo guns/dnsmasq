@@ -29,10 +29,6 @@ LDFLAGS       =
 COPTS         = 
 RPM_OPT_FLAGS = 
 LIBS          = 
-CONFDIR       = /etc/dnsmasq
-SHARECONFDIR  = $(PREFIX)/share/dnsmasq
-RCDIR         = $(PREFIX)/etc/rc.d
-SERVICEDIR    = $(PREFIX)/lib/systemd/system
 
 #################################################################
 
@@ -83,8 +79,6 @@ objs = cache.o rfc1035.o util.o option.o forward.o network.o \
 hdrs = dnsmasq.h config.h dhcp-protocol.h dhcp6-protocol.h \
        dns-protocol.h radv-protocol.h ip6addr.h
 
-_all : all-i18n
-
 all : $(BUILDDIR)
 	@cd $(BUILDDIR) && $(MAKE) \
  top="$(top)" \
@@ -104,7 +98,7 @@ clean : mostly_clean
 install : all-i18n install-i18n install-guns
 
 install-common :
-	$(INSTALL) -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(MANDIR)/man8
+	$(INSTALL) -d $(DESTDIR)$(BINDIR) -d $(DESTDIR)$(MANDIR)/man8
 	$(INSTALL) -m 644 $(MAN)/dnsmasq.8 $(DESTDIR)$(MANDIR)/man8 
 	$(INSTALL) -m 755 $(BUILDDIR)/dnsmasq $(DESTDIR)$(BINDIR)
 
@@ -174,19 +168,7 @@ dnsmasq.pot : $(objs:.o=.c) $(hdrs)
 .PHONY : all clean mostly_clean install install-common all-i18n install-i18n merge baseline bloatcheck
 
 install-guns :
-	$(INSTALL) -d $(DESTDIR)$(CONFDIR) $(DESTDIR)$(SHARECONFDIR)/cache $(DESTDIR)$(RCDIR) $(DESTDIR)$(SERVICEDIR)
-	for f in contrib/guns/conf/*; do \
-		test -e $(DESTDIR)$(CONFDIR)/`basename $$f` || $(INSTALL) -m 0644 $$f $(DESTDIR)$(CONFDIR); \
-		$(INSTALL) -m 0644 $$f $(DESTDIR)$(SHARECONFDIR); \
-	done
-	for f in contrib/guns/cache/*; do\
-		$(INSTALL) -m 0644 $$f $(DESTDIR)$(SHARECONFDIR)/cache; \
-	done
-	if test -n "$(RCDIR)"; then \
-		$(INSTALL) -d $(DESTDIR)$(RCDIR); \
-		sed 's:%%BINDIR%%:$(BINDIR):g' contrib/guns/dnsmasq.rc > $(DESTDIR)$(RCDIR)/dnsmasq.rc; \
-	fi
-	if test -n "$(SERVICEDIR)"; then \
-		$(INSTALL) -d $(DESTDIR)$(SERVICEDIR); \
-		sed 's:%%BINDIR%%:$(BINDIR):g' contrib/guns/dnsmasq.service > $(DESTDIR)$(SERVICEDIR)/dnsmasq.service; \
-	fi
+	$(INSTALL) -d $(DESTDIR)/etc $(DESTDIR)$(PREFIX)/lib/systemd/system
+	$(INSTALL) -m 644 contrib/nerv/dnsmasq.conf $(DESTDIR)/etc/
+	$(INSTALL) -m 644 contrib/nerv/dnsmasq.resolv.conf $(DESTDIR)/etc/
+	sed 's:%%BINDIR%%:$(BINDIR):g' contrib/nerv/dnsmasq.service > $(DESTDIR)$(PREFIX)/lib/systemd/system/dnsmasq.service

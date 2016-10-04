@@ -193,9 +193,9 @@ RESOLVFILE
 
 #ifndef CONFFILE
 #   if defined(__FreeBSD__)
-#      define CONFFILE "/usr/local/etc/dnsmasq/dnsmasq.conf"
+#      define CONFFILE "/usr/local/etc/dnsmasq.conf"
 #   else
-#      define CONFFILE "/etc/dnsmasq/dnsmasq.conf"
+#      define CONFFILE "/etc/dnsmasq.conf"
 #   endif
 #endif
 
