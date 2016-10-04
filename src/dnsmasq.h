@@ -935,7 +935,7 @@ extern struct daemon {
   char *mxtarget;
   struct mysubnet *add_subnet4;
   struct mysubnet *add_subnet6;
-  char *lease_file; 
+  char *lease_file;
   char *username, *groupname, *scriptuser;
   char *luascript;
   char *authserver, *hostmaster;
@@ -995,7 +995,6 @@ extern struct daemon {
   int back_to_the_future;
   char *timestamp_file;
 #endif
-  char *hosts_cache;
 
   /* globally used stuff for DNS */
   char *packet; /* packet buffer */

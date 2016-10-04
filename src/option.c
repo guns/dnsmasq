@@ -159,7 +159,6 @@ struct myoption {
 #define LOPT_SCRIPT_ARP    347
 #define LOPT_DHCPTTL       348
 #define LOPT_TFTP_MTU      349
-#define LOPT_HOSTCACHE     350
  
 #ifdef HAVE_GETOPT_LONG
 static const struct option opts[] =  
@@ -324,7 +323,6 @@ static const struct myoption opts[] =
     { "dns-loop-detect", 0, 0, LOPT_LOOP_DETECT },
     { "script-arp", 0, 0, LOPT_SCRIPT_ARP },
     { "dhcp-ttl", 1, 0 , LOPT_DHCPTTL },
-    { "hosts-cache", 1, 0, LOPT_HOSTCACHE },
     { NULL, 0, 0, 0 }
   };
 
@@ -496,7 +494,6 @@ static struct {
   { LOPT_LOOP_DETECT, OPT_LOOP_DETECT, NULL, gettext_noop("Detect and remove DNS forwarding loops."), NULL },
   { LOPT_IGNORE_ADDR, ARG_DUP, "<ipaddr>", gettext_noop("Ignore DNS responses containing ipaddr."), NULL }, 
   { LOPT_DHCPTTL, ARG_ONE, "<ttl>", gettext_noop("Set TTL in DNS responses with DHCP-derived addresses."), NULL }, 
-  { LOPT_HOSTCACHE, ARG_ONE, "<path>", gettext_noop("Dump cached A records to <path> on SIGUSR1"), NULL },
   { 0, 0, NULL, NULL, NULL }
 }; 
 
@@ -4049,12 +4046,6 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
       }
 #endif
 		
-    case LOPT_HOSTCACHE: /* --hosts-cache */
-      {
-	if (daemon->hosts_cache == NULL)
-	  daemon->hosts_cache = opt_string_alloc(arg);
-	break;
-      }
     default:
       ret_err(_("unsupported option (check that dnsmasq was compiled with DHCP/TFTP/DNSSEC/DBus support)"));
       
