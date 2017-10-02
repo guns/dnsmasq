@@ -1,4 +1,4 @@
-/* dnsmasq is Copyright (c) 2000-2016 Simon Kelley
+/* dnsmasq is Copyright (c) 2000-2017 Simon Kelley
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -118,11 +118,6 @@ size_t answer_auth(struct dns_header *header, char *limit, size_t qlen, time_t n
   struct all_addr addr;
   struct cname *a, *candidate;
   unsigned int wclen;
-  
-  /* Clear buffer beyond request to avoid risk of
-     information disclosure. */
-  memset(((char *)header) + qlen, 0, 
-	 (limit - ((char *)header)) - qlen);
   
   if (ntohs(header->qdcount) == 0 || OPCODE(header) != QUERY )
     return 0;
@@ -597,12 +592,12 @@ size_t answer_auth(struct dns_header *header, char *limit, size_t qlen, time_t n
 	      char *p = name;
 	      
 	      if (subnet->prefixlen >= 24)
-		p += sprintf(p, "%d.", a & 0xff);
+		p += sprintf(p, "%u.", a & 0xff);
 	      a = a >> 8;
 	      if (subnet->prefixlen >= 16 )
-		p += sprintf(p, "%d.", a & 0xff);
+		p += sprintf(p, "%u.", a & 0xff);
 	      a = a >> 8;
-	      p += sprintf(p, "%d.in-addr.arpa", a & 0xff);
+	      p += sprintf(p, "%u.in-addr.arpa", a & 0xff);
 	      
 	    }
 #ifdef HAVE_IPV6

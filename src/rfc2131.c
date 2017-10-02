@@ -1,4 +1,4 @@
-/* dnsmasq is Copyright (c) 2000-2016 Simon Kelley
+/* dnsmasq is Copyright (c) 2000-2017 Simon Kelley
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -32,7 +32,7 @@ static void option_put(struct dhcp_packet *mess, unsigned char *end, int opt, in
 static void option_put_string(struct dhcp_packet *mess, unsigned char *end, 
 			      int opt, char *string, int null_term);
 static struct in_addr option_addr(unsigned char *opt);
-static unsigned int option_uint(unsigned char *opt, int i, int size);
+static unsigned int option_uint(unsigned char *opt, int offset, int size);
 static void log_packet(char *type, void *addr, unsigned char *ext_mac, 
 		       int mac_len, char *interface, char *string, char *err, u32 xid);
 static unsigned char *option_find(struct dhcp_packet *mess, size_t size, int opt_type, int minsize);
@@ -42,14 +42,14 @@ static void clear_packet(struct dhcp_packet *mess, unsigned char *end);
 static int in_list(unsigned char *list, int opt);
 static void do_options(struct dhcp_context *context,
 		       struct dhcp_packet *mess,
-		       unsigned char *real_end, 
+		       unsigned char *end,
 		       unsigned char *req_options,
 		       char *hostname, 
-		       char *config_domain,
+		       char *domain,
 		       struct dhcp_netid *netid,
 		       struct in_addr subnet_addr, 
 		       unsigned char fqdn_flags,
-		       int null_term, int pxearch,
+		       int null_term, int pxe_arch,
 		       unsigned char *uuid,
 		       int vendor_class_len,
 		       time_t now,
@@ -58,7 +58,7 @@ static void do_options(struct dhcp_context *context,
 
 
 static void match_vendor_opts(unsigned char *opt, struct dhcp_opt *dopt); 
-static int do_encap_opts(struct dhcp_opt *opts, int encap, int flag, struct dhcp_packet *mess, unsigned char *end, int null_term);
+static int do_encap_opts(struct dhcp_opt *opt, int encap, int flag, struct dhcp_packet *mess, unsigned char *end, int null_term);
 static void pxe_misc(struct dhcp_packet *mess, unsigned char *end, unsigned char *uuid);
 static int prune_vendor_opts(struct dhcp_netid *netid);
 static struct dhcp_opt *pxe_opts(int pxe_arch, struct dhcp_netid *netid, struct in_addr local, time_t now);
@@ -157,7 +157,7 @@ size_t dhcp_reply(struct dhcp_context *context, char *iface_name, int int_index,
 	  for (offset = 0; offset < (len - 5); offset += elen + 5)
 	    {
 	      elen = option_uint(opt, offset + 4 , 1);
-	      if (option_uint(opt, offset, 4) == BRDBAND_FORUM_IANA)
+	      if (option_uint(opt, offset, 4) == BRDBAND_FORUM_IANA && offset + elen + 5 <= len)
 		{
 		  unsigned char *x = option_ptr(opt, offset + 5);
 		  unsigned char *y = option_ptr(opt, offset + elen + 5);
@@ -836,10 +836,10 @@ size_t dhcp_reply(struct dhcp_context *context, char *iface_name, int int_index,
 	  
 	  if (strchr(service->basename, '.'))
 	    snprintf((char *)mess->file, sizeof(mess->file),
-		"%s.%d", service->basename, layer);
+		"%s", service->basename);
 	  else
 	    snprintf((char *)mess->file, sizeof(mess->file),
-		"%s", service->basename);
+		"%s.%d", service->basename, layer);
 	  
 	  option_put(mess, end, OPTION_MESSAGE_TYPE, 1, DHCPACK);
 	  option_put(mess, end, OPTION_SERVER_IDENTIFIER, INADDRSZ, htonl(context->local.s_addr));
@@ -1040,8 +1040,6 @@ size_t dhcp_reply(struct dhcp_context *context, char *iface_name, int int_index,
 		  else if (have_config(config, CONFIG_DECLINED) &&
 			   difftime(now, config->decline_time) < (float)DECLINE_BACKOFF)
 		    my_syslog(MS_DHCP | LOG_WARNING, _("not using configured address %s because it was previously declined"), addrs);
-		  else if (!do_icmp_ping(now, config->addr, 0, loopback))
-		    my_syslog(MS_DHCP | LOG_WARNING, _("not using configured address %s because it is in use by another host"), addrs);
 		  else
 		    conf = config->addr;
 		}
@@ -2454,10 +2452,10 @@ static void do_options(struct dhcp_context *context,
 
 	      if (fqdn_flags & 0x04)
 		{
-		  p = do_rfc1035_name(p, hostname);
+		  p = do_rfc1035_name(p, hostname, NULL);
 		  if (domain)
 		    {
-		      p = do_rfc1035_name(p, domain);
+		      p = do_rfc1035_name(p, domain, NULL);
 		      *p++ = 0;
 		    }
 		}
