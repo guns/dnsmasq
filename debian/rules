@@ -11,65 +11,82 @@
 
 package=dnsmasq-base
 
-CFLAGS = $(shell export DEB_BUILD_OPTIONS=$(DEB_BUILD_OPTIONS); dpkg-buildflags --get CFLAGS)
-CFLAGS += $(shell dpkg-buildflags --get CPPFLAGS)
+dpkg_buildflags := DEB_BUILD_MAINT_OPTIONS="hardening=+all" dpkg-buildflags
+
+CFLAGS = $(shell $(dpkg_buildflags) --get CFLAGS)
+CFLAGS += $(shell $(dpkg_buildflags) --get CPPFLAGS)
 CFLAGS += -Wall -W
 
-LDFLAGS = $(shell dpkg-buildflags --get LDFLAGS)
+LDFLAGS = $(shell $(dpkg_buildflags) --get LDFLAGS)
 
-COPTS = 
+DEB_COPTS = $(COPTS)
 
 TARGET = install-i18n
 
-DEB_BUILD_ARCH_OS := $(shell dpkg-architecture -qDEB_BUILD_ARCH_OS)
+DEB_HOST_ARCH_OS := $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
+BUILD_DATE := $(shell dpkg-parsechangelog --show-field Date)
+
+# Force package version based on git tags.
+ifneq (,$(filter gitversion,$(DEB_BUILD_OPTIONS)))
+     PACKAGE_VERSION = $(shell bld/get-version `pwd` |  sed 's/test/~&/; s/[a-z]/~&/;  s/-/./g; s/$$/-1/; s/^/-v/';)
+endif
 
 ifeq (,$(filter nodbus,$(DEB_BUILD_OPTIONS)))
-     COPTS += -DHAVE_DBUS
+     DEB_COPTS += -DHAVE_DBUS
 endif
 
 ifeq (,$(filter noconntrack,$(DEB_BUILD_OPTIONS)))
-ifeq ($(DEB_BUILD_ARCH_OS),linux)
-     COPTS += -DHAVE_CONNTRACK
+ifeq ($(DEB_HOST_ARCH_OS),linux)
+     DEB_COPTS += -DHAVE_CONNTRACK
 endif
 endif
 
 ifneq (,$(filter noipset,$(DEB_BUILD_OPTIONS)))
-     COPTS += -DNO_IPSET
+     DEB_COPTS += -DNO_IPSET
 endif
 
 ifneq (,$(filter nodhcp6,$(DEB_BUILD_OPTIONS)))
-     COPTS += -DNO_DHCP6
+     DEB_COPTS += -DNO_DHCP6
 endif
 
 ifneq (,$(filter noipv6,$(DEB_BUILD_OPTIONS)))
-     COPTS += -DNO_IPV6
+     DEB_COPTS += -DNO_IPV6
 endif
 
 ifneq (,$(filter notftp,$(DEB_BUILD_OPTIONS)))
-     COPTS += -DNO_TFTP
+     DEB_COPTS += -DNO_TFTP
 endif
 
 ifneq (,$(filter nodhcp,$(DEB_BUILD_OPTIONS)))
-     COPTS += -DNO_DHCP
+     DEB_COPTS += -DNO_DHCP
 endif
 
 ifneq (,$(filter noscript,$(DEB_BUILD_OPTIONS)))
-     COPTS += -DNO_SCRIPT
+     DEB_COPTS += -DNO_SCRIPT
 endif
 
 ifneq (,$(filter nortc,$(DEB_BUILD_OPTIONS)))
-     COPTS += -DHAVE_BROKEN_RTC
+     DEB_COPTS += -DHAVE_BROKEN_RTC
 endif
 
 ifneq (,$(filter noi18n,$(DEB_BUILD_OPTIONS)))
      TARGET = install
      ifeq (,$(filter noidn, $(DEB_BUILD_OPTIONS)))
-	COPTS += -DHAVE_IDN
+	DEB_COPTS += -DHAVE_IDN
      endif	
 endif
 
 ifneq (,$(filter uselua,$(DEB_BUILD_OPTIONS)))
-     COPTS += -DHAVE_LUASCRIPT
+     DEB_COPTS += -DHAVE_LUASCRIPT
+endif
+
+ifeq (,$(filter nodnssec,$(DEB_BUILD_OPTIONS)))
+     DEB_COPTS += -DHAVE_DNSSEC
+endif
+
+ifneq ($(DEB_HOST_ARCH_OS),linux)
+     # For strlcpy in FreeBSD
+     LDFLAGS += -lbsd
 endif
 
 clean:
@@ -102,8 +119,9 @@ binary-indep:	checkroot
 	install -m 644 debian/systemd.service debian/daemon/lib/systemd/system/dnsmasq.service
 	install -m 644 debian/insserv debian/daemon/etc/insserv.conf.d/dnsmasq
 	ln -s $(package) debian/daemon/usr/share/doc/dnsmasq
-	cd debian/daemon && find . -type f ! -regex '.*DEBIAN/.*' -printf '%P\0' | xargs -r0 md5sum > DEBIAN/md5sums	
-	dpkg-gencontrol -pdnsmasq -Pdebian/daemon
+	cd debian/daemon && find . -type f ! -regex '.*DEBIAN/.*' -printf '%P\0' | LC_ALL=C sort -z | xargs -r0 md5sum > DEBIAN/md5sums	
+	dpkg-gencontrol $(PACKAGE_VERSION) -T -pdnsmasq -Pdebian/daemon
+	find debian/daemon -depth -newermt '$(BUILD_DATE)' -print0 | xargs -0r touch --no-dereference --date='$(BUILD_DATE)'
 	chown -R root.root debian/daemon
 	chmod -R g-ws debian/daemon
 	dpkg --build debian/daemon ..
@@ -117,68 +135,74 @@ binary-arch:	checkroot
 	        -d debian/base/usr/share/doc/$(package) \
 		-d debian/base/usr/share/doc/$(package)/examples \
 	        -d debian/base/var/run \
+		-d debian/base/usr/share/$(package) \
 	        -d debian/base/var/lib/misc
-	make $(TARGET) PREFIX=/usr DESTDIR=`pwd`/debian/base CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" COPTS="$(COPTS)" CC=gcc
+	make $(TARGET) PREFIX=/usr DESTDIR=`pwd`/debian/base CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" COPTS="$(DEB_COPTS)" CC=gcc
 ifeq (,$(findstring nodocs,$(DEB_BUILD_OPTIONS)))
-	install -m 644 doc.html debian/base/usr/share/doc/$(package)/.
+# Need to remove paypal links in Debian Package for policy reasons.
+	sed -e /\<H2\>Donations/Q -e /icon.png/d doc.html -e /favicon.ico/d >debian/base/usr/share/doc/$(package)/doc.html
+	echo "</BODY>" >>debian/base/usr/share/doc/$(package)/doc.html 
 	install -m 644 setup.html debian/base/usr/share/doc/$(package)/.
 	install -m 644 dnsmasq.conf.example debian/base/usr/share/doc/$(package)/examples/.
+	install -m 644 trust-anchors.conf debian/base/usr/share/$(package)/.
 	install -m 644 FAQ debian/base/usr/share/doc/$(package)/.
-	gzip -9 debian/base/usr/share/doc/$(package)/FAQ
+	gzip -9n debian/base/usr/share/doc/$(package)/FAQ
 	install -m 644 CHANGELOG debian/base/usr/share/doc/$(package)/changelog
-	gzip -9 debian/base/usr/share/doc/$(package)/changelog
+	gzip -9n debian/base/usr/share/doc/$(package)/changelog
 	install -m 644 CHANGELOG.archive debian/base/usr/share/doc/$(package)/changelog.archive
-	gzip -9 debian/base/usr/share/doc/$(package)/changelog.archive
+	gzip -9n debian/base/usr/share/doc/$(package)/changelog.archive
 	install -m 644 dbus/DBus-interface debian/base/usr/share/doc/$(package)/.
-	gzip -9 debian/base/usr/share/doc/$(package)/DBus-interface	
+	gzip -9n debian/base/usr/share/doc/$(package)/DBus-interface	
 endif
 	install -m 644 debian/dnsmasq-base.conffiles debian/base/DEBIAN/conffiles
 	install -m 755 debian/dnsmasq-base.postinst debian/base/DEBIAN/postinst
 	install -m 755 debian/dnsmasq-base.postrm  debian/base/DEBIAN/postrm
 	install -m 644 debian/changelog debian/base/usr/share/doc/$(package)/changelog.Debian
-	gzip -9 debian/base/usr/share/doc/$(package)/changelog.Debian
+	gzip -9n debian/base/usr/share/doc/$(package)/changelog.Debian
 	install -m 644 debian/readme debian/base/usr/share/doc/$(package)/README.Debian
 	install -m 644 debian/copyright debian/base/usr/share/doc/$(package)/copyright
 	install -m 644 debian/dbus.conf debian/base/etc/dbus-1/system.d/dnsmasq.conf
-	gzip -9 debian/base/usr/share/man/man8/dnsmasq.8
+	gzip -9n debian/base/usr/share/man/man8/dnsmasq.8
 	for f in debian/base/usr/share/man/*; do \
 		if [ -f $$f/man8/dnsmasq.8 ]; then \
-                       gzip -9 $$f/man8/dnsmasq.8 ; \
+                       gzip -9n $$f/man8/dnsmasq.8 ; \
                 fi \
 	done
 ifeq (,$(findstring nostrip,$(DEB_BUILD_OPTIONS)))
 	strip -R .note -R .comment debian/base/usr/sbin/dnsmasq
 endif
-	cd debian/base && find . -type f ! -regex '.*DEBIAN/.*' -printf '%P\0' | xargs -r0 md5sum > DEBIAN/md5sums
-	dpkg-shlibdeps debian/base/usr/sbin/dnsmasq
-	dpkg-gencontrol -pdnsmasq-base -Pdebian/base
+	cd debian/base && find . -type f ! -regex '.*DEBIAN/.*' -printf '%P\0' | LC_ALL=C sort -z | xargs -r0 md5sum > DEBIAN/md5sums
+	dpkg-shlibdeps --warnings=1 debian/base/usr/sbin/dnsmasq
+	dpkg-gencontrol $(PACKAGE_VERSION) -pdnsmasq-base -Pdebian/base
+	find debian/base -depth -newermt '$(BUILD_DATE)' -print0 | xargs -0r touch --no-dereference --date='$(BUILD_DATE)'
 	chown -R root.root debian/base
 	chmod -R g-ws debian/base 
 	dpkg --build debian/base ..
 
-ifeq ($(DEB_BUILD_ARCH_OS),linux)
+ifeq ($(DEB_HOST_ARCH_OS),linux)
 	rm -rf debian/utils
 	install -m 755 -d debian/utils/DEBIAN \
                        -d debian/utils/usr/share/man/man1 \
 	               -d debian/utils/usr/bin \
                        -d debian/utils/usr/share/doc/dnsmasq-utils
-	make -C contrib/wrt PREFIX=/usr DESTDIR=`pwd`/debian/utils CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" COPTS="$(COPTS)" CC=gcc
+	make -C contrib/wrt PREFIX=/usr DESTDIR=`pwd`/debian/utils CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" COPTS="$(DEB_COPTS)" CC=gcc
 	install -m 755 contrib/wrt/dhcp_release debian/utils/usr/bin/dhcp_release
 	install -m 644 contrib/wrt/dhcp_release.1 debian/utils/usr/share/man/man1/dhcp_release.1
-	gzip -9 debian/utils/usr/share/man/man1/dhcp_release.1
+	gzip -9n debian/utils/usr/share/man/man1/dhcp_release.1
 	install -m 755 contrib/wrt/dhcp_lease_time debian/utils/usr/bin/dhcp_lease_time
 	install -m 644 contrib/wrt/dhcp_lease_time.1 debian/utils/usr/share/man/man1/dhcp_lease_time.1
 	install -m 644 debian/copyright debian/utils/usr/share/doc/dnsmasq-utils/copyright
 	install -m 644 debian/changelog debian/utils/usr/share/doc/dnsmasq-utils/changelog.Debian
-	gzip -9 debian/utils/usr/share/doc/dnsmasq-utils/changelog.Debian
-	gzip -9 debian/utils/usr/share/man/man1/dhcp_lease_time.1
+	gzip -9n debian/utils/usr/share/doc/dnsmasq-utils/changelog.Debian
+	gzip -9n debian/utils/usr/share/man/man1/dhcp_lease_time.1
 ifeq (,$(findstring nostrip,$(DEB_BUILD_OPTIONS)))
 	strip -R .note -R .comment debian/utils/usr/bin/dhcp_release
 	strip -R .note -R .comment debian/utils/usr/bin/dhcp_lease_time
 endif	
-	cd debian/utils && find . -type f ! -regex '.*DEBIAN/.*' -printf '%P\0' | xargs -r0 md5sum > DEBIAN/md5sums
+	cd debian/utils && find . -type f ! -regex '.*DEBIAN/.*' -printf '%P\0' | LC_ALL=C sort -z | xargs -r0 md5sum > DEBIAN/md5sums
 	dpkg-shlibdeps -Tdebian/utils-substvars debian/utils/usr/bin/dhcp_release debian/utils/usr/bin/dhcp_lease_time
-	dpkg-gencontrol -Tdebian/utils-substvars -pdnsmasq-utils -Pdebian/utils
+	dpkg-gencontrol $(PACKAGE_VERSION) -Tdebian/utils-substvars -pdnsmasq-utils -Pdebian/utils
+	find debian/utils -depth -newermt '$(BUILD_DATE)' -print0 | xargs -0r touch --no-dereference --date='$(BUILD_DATE)'
 	chown -R root.root debian/utils
 	chmod -R g-ws debian/utils 
 	dpkg --build debian/utils ..

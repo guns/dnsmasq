@@ -1,4 +1,4 @@
-/* dnsmasq is Copyright (c) 2000-2013 Simon Kelley
+/* dnsmasq is Copyright (c) 2000-2015 Simon Kelley
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -28,24 +28,12 @@
 #include <idna.h>
 #endif
 
-#ifdef HAVE_ARC4RANDOM
-void rand_init(void)
-{
-  return;
-}
-
-unsigned short rand16(void)
-{
-   return (unsigned short) (arc4random() >> 15);
-}
-
-#else
-
 /* SURF random number generator */
 
 static u32 seed[32];
 static u32 in[12];
 static u32 out[8];
+static int outleft = 0;
 
 void rand_init()
 {
@@ -83,18 +71,43 @@ static void surf(void)
 
 unsigned short rand16(void)
 {
-  static int outleft = 0;
-
-  if (!outleft) {
-    if (!++in[0]) if (!++in[1]) if (!++in[2]) ++in[3];
-    surf();
-    outleft = 8;
-  }
-
+  if (!outleft) 
+    {
+      if (!++in[0]) if (!++in[1]) if (!++in[2]) ++in[3];
+      surf();
+      outleft = 8;
+    }
+  
   return (unsigned short) out[--outleft];
 }
 
-#endif
+u32 rand32(void)
+{
+ if (!outleft) 
+    {
+      if (!++in[0]) if (!++in[1]) if (!++in[2]) ++in[3];
+      surf();
+      outleft = 8;
+    }
+  
+  return out[--outleft]; 
+}
+
+u64 rand64(void)
+{
+  static int outleft = 0;
+
+  if (outleft < 2)
+    {
+      if (!++in[0]) if (!++in[1]) if (!++in[2]) ++in[3];
+      surf();
+      outleft = 8;
+    }
+  
+  outleft -= 2;
+
+  return (u64)out[outleft+1] + (((u64)out[outleft]) << 32);
+}
 
 static int check_name(char *in)
 {
@@ -108,10 +121,10 @@ static int check_name(char *in)
   
   if (in[l-1] == '.')
     {
-      if (l == 1) return 0;
       in[l-1] = 0;
+      nowhite = 1;
     }
-  
+
   for (; (c = *in); in++)
     {
       if (c == '.')
@@ -142,17 +155,20 @@ static int check_name(char *in)
 int legal_hostname(char *name)
 {
   char c;
+  int first;
 
   if (!check_name(name))
     return 0;
 
-  for (; (c = *name); name++)
+  for (first = 1; (c = *name); name++, first = 0)
     /* check for legal char a-z A-Z 0-9 - _ . */
     {
       if ((c >= 'A' && c <= 'Z') ||
 	  (c >= 'a' && c <= 'z') ||
-	  (c >= '0' && c <= '9') ||
-	  c == '-' || c == '_')
+	  (c >= '0' && c <= '9'))
+	continue;
+
+      if (!first && (c == '-' || c == '_'))
 	continue;
       
       /* end of hostname part */
@@ -210,7 +226,14 @@ unsigned char *do_rfc1035_name(unsigned char *p, char *sval)
     {
       unsigned char *cp = p++;
       for (j = 0; *sval && (*sval != '.'); sval++, j++)
-	*p++ = *sval;
+	{
+#ifdef HAVE_DNSSEC
+	  if (option_bool(OPT_DNSSEC_VALID) && *sval == NAME_ESCAPE)
+	    *p++ = (*(++sval))-1;
+	  else
+#endif		
+	    *p++ = *sval;
+	}
       *cp  = j;
       if (*sval)
 	sval++;
@@ -258,6 +281,7 @@ int sockaddr_isequal(union mysockaddr *s1, union mysockaddr *s2)
 #ifdef HAVE_IPV6      
       if (s1->sa.sa_family == AF_INET6 &&
 	  s1->in6.sin6_port == s2->in6.sin6_port &&
+	  s1->in6.sin6_scope_id == s2->in6.sin6_scope_id &&
 	  IN6_ARE_ADDR_EQUAL(&s1->in6.sin6_addr, &s2->in6.sin6_addr))
 	return 1;
 #endif
@@ -313,6 +337,19 @@ time_t dnsmasq_time(void)
 #else
   return time(NULL);
 #endif
+}
+
+int netmask_length(struct in_addr mask)
+{
+  int zero_count = 0;
+
+  while (0x0 == (mask.s_addr & 0x1) && zero_count < 32) 
+    {
+      mask.s_addr >>= 1;
+      zero_count++;
+    }
+  
+  return 32 - zero_count;
 }
 
 int is_same_net(struct in_addr a, struct in_addr b, struct in_addr mask)
@@ -454,7 +491,7 @@ int parse_hex(char *in, unsigned char *out, int maxlen,
 		  int j, bytes = (1 + (r - in))/2;
 		  for (j = 0; j < bytes; j++)
 		    { 
-		      char sav;
+		      char sav = sav;
 		      if (j < bytes - 1)
 			{
 			  sav = in[(j+1)*2];
@@ -533,27 +570,41 @@ char *print_mac(char *buff, unsigned char *mac, int len)
   return buff;
 }
 
-void bump_maxfd(int fd, int *max)
+/* rc is return from sendto and friends.
+   Return 1 if we should retry.
+   Set errno to zero if we succeeded. */
+int retry_send(ssize_t rc)
 {
-  if (fd > *max)
-    *max = fd;
-}
+  static int retries = 0;
+  struct timespec waiter;
+  
+  if (rc != -1)
+    {
+      retries = 0;
+      errno = 0;
+      return 0;
+    }
+  
+  /* Linux kernels can return EAGAIN in perpetuity when calling
+     sendmsg() and the relevant interface has gone. Here we loop
+     retrying in EAGAIN for 1 second max, to avoid this hanging 
+     dnsmasq. */
 
-int retry_send(void)
-{
-   struct timespec waiter;
-   if (errno == EAGAIN || errno == EWOULDBLOCK)
+  if (errno == EAGAIN || errno == EWOULDBLOCK)
      {
        waiter.tv_sec = 0;
        waiter.tv_nsec = 10000;
        nanosleep(&waiter, NULL);
-       return 1;
+       if (retries++ < 1000)
+	 return 1;
      }
-   
-   if (errno == EINTR)
-     return 1;
-
-   return 0;
+  
+  retries = 0;
+  
+  if (errno == EINTR)
+    return 1;
+  
+  return 0;
 }
 
 int read_write(int fd, unsigned char *packet, int size, int rw)
@@ -562,22 +613,21 @@ int read_write(int fd, unsigned char *packet, int size, int rw)
   
   for (done = 0; done < size; done += n)
     {
-    retry:
-      if (rw)
-        n = read(fd, &packet[done], (size_t)(size - done));
-      else
-        n = write(fd, &packet[done], (size_t)(size - done));
+      do { 
+	if (rw)
+	  n = read(fd, &packet[done], (size_t)(size - done));
+	else
+	  n = write(fd, &packet[done], (size_t)(size - done));
+	
+	if (n == 0)
+	  return 0;
+	
+      } while (retry_send(n) || errno == ENOMEM || errno == ENOBUFS);
 
-      if (n == 0)
-        return 0;
-      else if (n == -1)
-        {
-          if (retry_send() || errno == ENOMEM || errno == ENOBUFS)
-            goto retry;
-          else
-            return 0;
-        }
+      if (errno != 0)
+	return 0;
     }
+     
   return 1;
 }
 
@@ -597,4 +647,23 @@ int wildcard_match(const char* wildcard, const char* match)
     }
 
   return *wildcard == *match;
+}
+
+/* The same but comparing a maximum of NUM characters, like strncmp.  */
+int wildcard_matchn(const char* wildcard, const char* match, int num)
+{
+  while (*wildcard && *match && num)
+    {
+      if (*wildcard == '*')
+        return 1;
+
+      if (*wildcard != *match)
+        return 0; 
+
+      ++wildcard;
+      ++match;
+      --num;
+    }
+
+  return (!num) || (*wildcard == *match);
 }

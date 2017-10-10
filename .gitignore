@@ -2,7 +2,8 @@ src/*.o
 src/*.mo
 src/dnsmasq.pot
 src/dnsmasq
-src/.configured
+src/dnsmasq_baseline
+src/.copts_*
 contrib/wrt/dhcp_lease_time
 contrib/wrt/dhcp_release
 debian/base/
@@ -11,3 +12,5 @@ debian/files
 debian/substvars
 debian/utils-substvars
 debian/utils/
+/*.tar.xz*
+/pkg

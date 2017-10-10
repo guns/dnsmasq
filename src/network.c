@@ -1,4 +1,4 @@
-/* dnsmasq is Copyright (c) 2000-2013 Simon Kelley
+/* dnsmasq is Copyright (c) 2000-2015 Simon Kelley
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -99,6 +99,8 @@ int indextoname(int fd, int index, char *name)
 
 int indextoname(int fd, int index, char *name)
 { 
+  (void)fd;
+
   if (index == 0 || !if_indextoname(index, name))
     return 0;
 
@@ -110,10 +112,12 @@ int indextoname(int fd, int index, char *name)
 int iface_check(int family, struct all_addr *addr, char *name, int *auth)
 {
   struct iname *tmp;
-  int ret = 1;
+  int ret = 1, match_addr = 0;
 
   /* Note: have to check all and not bail out early, so that we set the
-     "used" flags. */
+     "used" flags.
+
+     May be called with family == AF_LOCALto check interface by name only. */
   
   if (auth)
     *auth = 0;
@@ -132,25 +136,27 @@ int iface_check(int family, struct all_addr *addr, char *name, int *auth)
 	    {
 	      if (family == AF_INET &&
 		  tmp->addr.in.sin_addr.s_addr == addr->addr.addr4.s_addr)
-		ret = tmp->used = 1;
+		ret = match_addr = tmp->used = 1;
 #ifdef HAVE_IPV6
 	      else if (family == AF_INET6 &&
 		       IN6_ARE_ADDR_EQUAL(&tmp->addr.in6.sin6_addr, 
 					  &addr->addr.addr6))
-		ret = tmp->used = 1;
+		ret = match_addr = tmp->used = 1;
 #endif
 	    }          
     }
   
-  for (tmp = daemon->if_except; tmp; tmp = tmp->next)
-    if (tmp->name && wildcard_match(tmp->name, name))
-      ret = 0;
+  if (!match_addr)
+    for (tmp = daemon->if_except; tmp; tmp = tmp->next)
+      if (tmp->name && wildcard_match(tmp->name, name))
+	ret = 0;
     
 
   for (tmp = daemon->authinterface; tmp; tmp = tmp->next)
     if (tmp->name)
       {
-	if (strcmp(tmp->name, name) == 0)
+	if (strcmp(tmp->name, name) == 0 &&
+	    (tmp->addr.sa.sa_family == 0 || tmp->addr.sa.sa_family == family))
 	  break;
       }
     else if (addr && tmp->addr.sa.sa_family == AF_INET && family == AF_INET &&
@@ -204,52 +210,205 @@ int loopback_exception(int fd, int family, struct all_addr *addr, char *name)
   return 0;
 }
 
-static int iface_allowed(struct irec **irecp, int if_index, 
-			 union mysockaddr *addr, struct in_addr netmask, int dad) 
+/* If we're configured with something like --interface=eth0:0 then we'll listen correctly
+   on the relevant address, but the name of the arrival interface, derived from the
+   index won't match the config. Check that we found an interface address for the arrival 
+   interface: daemon->interfaces must be up-to-date. */
+int label_exception(int index, int family, struct all_addr *addr)
 {
   struct irec *iface;
-  int fd, mtu = 0, loopback;
+
+  /* labels only supported on IPv4 addresses. */
+  if (family != AF_INET)
+    return 0;
+
+  for (iface = daemon->interfaces; iface; iface = iface->next)
+    if (iface->index == index && iface->addr.sa.sa_family == AF_INET &&
+	iface->addr.in.sin_addr.s_addr == addr->addr.addr4.s_addr)
+      return 1;
+
+  return 0;
+}
+
+struct iface_param {
+  struct addrlist *spare;
+  int fd;
+};
+
+static int iface_allowed(struct iface_param *param, int if_index, char *label,
+			 union mysockaddr *addr, struct in_addr netmask, int prefixlen, int iface_flags) 
+{
+  struct irec *iface;
+  int mtu = 0, loopback;
   struct ifreq ifr;
   int tftp_ok = !!option_bool(OPT_TFTP);
   int dhcp_ok = 1;
   int auth_dns = 0;
-#ifdef HAVE_DHCP
+#if defined(HAVE_DHCP) || defined(HAVE_TFTP)
   struct iname *tmp;
 #endif
 
-  /* check whether the interface IP has been added already 
-     we call this routine multiple times. */
-  for (iface = *irecp; iface; iface = iface->next) 
-    if (sockaddr_isequal(&iface->addr, addr))
-      {
-	iface->dad = dad;
-	return 1;
-      }
+  (void)prefixlen;
 
-  if ((fd = socket(PF_INET, SOCK_DGRAM, 0)) == -1 ||
-      !indextoname(fd, if_index, ifr.ifr_name) ||
-      ioctl(fd, SIOCGIFFLAGS, &ifr) == -1)
-    {
-      if (fd != -1)
-	{
-	  int errsave = errno;
-	  close(fd);
-	  errno = errsave;
-	}
-      return 0;
-    }
+  if (!indextoname(param->fd, if_index, ifr.ifr_name) ||
+      ioctl(param->fd, SIOCGIFFLAGS, &ifr) == -1)
+    return 0;
    
   loopback = ifr.ifr_flags & IFF_LOOPBACK;
   
   if (loopback)
-     dhcp_ok = 0;
-
-  if (ioctl(fd, SIOCGIFMTU, &ifr) != -1)
+    dhcp_ok = 0;
+  
+  if (ioctl(param->fd, SIOCGIFMTU, &ifr) != -1)
     mtu = ifr.ifr_mtu;
   
-  close(fd);
+  if (!label)
+    label = ifr.ifr_name;
+ 
+  /* maintain a list of all addresses on all interfaces for --local-service option */
+  if (option_bool(OPT_LOCAL_SERVICE))
+    {
+      struct addrlist *al;
+
+      if (param->spare)
+	{
+	  al = param->spare;
+	  param->spare = al->next;
+	}
+      else
+	al = whine_malloc(sizeof(struct addrlist));
+      
+      if (al)
+	{
+	  al->next = daemon->interface_addrs;
+	  daemon->interface_addrs = al;
+	  al->prefixlen = prefixlen;
+	  
+	  if (addr->sa.sa_family == AF_INET)
+	    {
+	      al->addr.addr.addr4 = addr->in.sin_addr;
+	      al->flags = 0;
+	    }
+#ifdef HAVE_IPV6
+	  else
+	    {
+	      al->addr.addr.addr6 = addr->in6.sin6_addr;
+	      al->flags = ADDRLIST_IPV6;
+	    } 
+#endif
+	}
+    }
   
-  /* If we are restricting the set of interfaces to use, make
+#ifdef HAVE_IPV6
+  if (addr->sa.sa_family != AF_INET6 || !IN6_IS_ADDR_LINKLOCAL(&addr->in6.sin6_addr))
+#endif
+    {
+      struct interface_name *int_name;
+      struct addrlist *al;
+#ifdef HAVE_AUTH
+      struct auth_zone *zone;
+      struct auth_name_list *name;
+
+      /* Find subnets in auth_zones */
+      for (zone = daemon->auth_zones; zone; zone = zone->next)
+	for (name = zone->interface_names; name; name = name->next)
+	  if (wildcard_match(name->name, label))
+	    {
+	      if (addr->sa.sa_family == AF_INET && (name->flags & AUTH4))
+		{
+		  if (param->spare)
+		    {
+		      al = param->spare;
+		      param->spare = al->next;
+		    }
+		  else
+		    al = whine_malloc(sizeof(struct addrlist));
+		  
+		  if (al)
+		    {
+		      al->next = zone->subnet;
+		      zone->subnet = al;
+		      al->prefixlen = prefixlen;
+		      al->addr.addr.addr4 = addr->in.sin_addr;
+		      al->flags = 0;
+		    }
+		}
+	      
+#ifdef HAVE_IPV6
+	      if (addr->sa.sa_family == AF_INET6 && (name->flags & AUTH6))
+		{
+		  if (param->spare)
+		    {
+		      al = param->spare;
+		      param->spare = al->next;
+		    }
+		  else
+		    al = whine_malloc(sizeof(struct addrlist));
+		  
+		  if (al)
+		    {
+		      al->next = zone->subnet;
+		      zone->subnet = al;
+		      al->prefixlen = prefixlen;
+		      al->addr.addr.addr6 = addr->in6.sin6_addr;
+		      al->flags = ADDRLIST_IPV6;
+		    }
+		} 
+#endif
+	      
+	    }
+#endif
+       
+      /* Update addresses from interface_names. These are a set independent
+	 of the set we're listening on. */  
+      for (int_name = daemon->int_names; int_name; int_name = int_name->next)
+	if (strncmp(label, int_name->intr, IF_NAMESIZE) == 0 && 
+	    (addr->sa.sa_family == int_name->family || int_name->family == 0))
+	  {
+	    if (param->spare)
+	      {
+		al = param->spare;
+		param->spare = al->next;
+	      }
+	    else
+	      al = whine_malloc(sizeof(struct addrlist));
+	    
+	    if (al)
+	      {
+		al->next = int_name->addr;
+		int_name->addr = al;
+		
+		if (addr->sa.sa_family == AF_INET)
+		  {
+		    al->addr.addr.addr4 = addr->in.sin_addr;
+		    al->flags = 0;
+		  }
+#ifdef HAVE_IPV6
+		else
+		 {
+		    al->addr.addr.addr6 = addr->in6.sin6_addr;
+		    al->flags = ADDRLIST_IPV6;
+		    /* Privacy addresses and addresses still undergoing DAD and deprecated addresses
+		       don't appear in forward queries, but will in reverse ones. */
+		    if (!(iface_flags & IFACE_PERMANENT) || (iface_flags & (IFACE_DEPRECATED | IFACE_TENTATIVE)))
+		      al->flags |= ADDRLIST_REVONLY;
+		 } 
+#endif
+	      }
+	  }
+    }
+ 
+  /* check whether the interface IP has been added already 
+     we call this routine multiple times. */
+  for (iface = daemon->interfaces; iface; iface = iface->next) 
+    if (sockaddr_isequal(&iface->addr, addr))
+      {
+	iface->dad = !!(iface_flags & IFACE_TENTATIVE);
+	iface->found = 1; /* for garbage collection */
+	return 1;
+      }
+
+ /* If we are restricting the set of interfaces to use, make
      sure that loopback interfaces are in that set. */
   if (daemon->if_names && loopback)
     {
@@ -273,12 +432,12 @@ static int iface_allowed(struct irec **irecp, int if_index,
     }
   
   if (addr->sa.sa_family == AF_INET &&
-      !iface_check(AF_INET, (struct all_addr *)&addr->in.sin_addr, ifr.ifr_name, &auth_dns))
+      !iface_check(AF_INET, (struct all_addr *)&addr->in.sin_addr, label, &auth_dns))
     return 1;
 
 #ifdef HAVE_IPV6
   if (addr->sa.sa_family == AF_INET6 &&
-      !iface_check(AF_INET6, (struct all_addr *)&addr->in6.sin6_addr, ifr.ifr_name, &auth_dns))
+      !iface_check(AF_INET6, (struct all_addr *)&addr->in6.sin6_addr, label, &auth_dns))
     return 1;
 #endif
     
@@ -298,6 +457,18 @@ static int iface_allowed(struct irec **irecp, int if_index,
 	}
 #endif
  
+  
+#ifdef HAVE_TFTP
+  if (daemon->tftp_interfaces)
+    {
+      /* dedicated tftp interface list */
+      tftp_ok = 0;
+      for (tmp = daemon->tftp_interfaces; tmp; tmp = tmp->next)
+	if (tmp->name && wildcard_match(tmp->name, ifr.ifr_name))
+	  tftp_ok = 1;
+    }
+#endif
+  
   /* add to list */
   if ((iface = whine_malloc(sizeof(struct irec))))
     {
@@ -307,14 +478,15 @@ static int iface_allowed(struct irec **irecp, int if_index,
       iface->dhcp_ok = dhcp_ok;
       iface->dns_auth = auth_dns;
       iface->mtu = mtu;
-      iface->dad = dad;
-      iface->done = iface->multicast_done = 0;
+      iface->dad = !!(iface_flags & IFACE_TENTATIVE);
+      iface->found = 1;
+      iface->done = iface->multicast_done = iface->warned = 0;
       iface->index = if_index;
       if ((iface->name = whine_malloc(strlen(ifr.ifr_name)+1)))
 	{
 	  strcpy(iface->name, ifr.ifr_name);
-	  iface->next = *irecp;
-	  *irecp = iface;
+	  iface->next = daemon->interfaces;
+	  daemon->interfaces = iface;
 	  return 1;
 	}
       free(iface);
@@ -334,7 +506,6 @@ static int iface_allowed_v6(struct in6_addr *local, int prefix,
   struct in_addr netmask; /* dummy */
   netmask.s_addr = 0;
 
-  (void)prefix; /* warning */
   (void)scope; /* warning */
   (void)preferred;
   (void)valid;
@@ -346,16 +517,21 @@ static int iface_allowed_v6(struct in6_addr *local, int prefix,
   addr.in6.sin6_family = AF_INET6;
   addr.in6.sin6_addr = *local;
   addr.in6.sin6_port = htons(daemon->port);
-  addr.in6.sin6_scope_id = if_index;
+  /* FreeBSD insists this is zero for non-linklocal addresses */
+  if (IN6_IS_ADDR_LINKLOCAL(local))
+    addr.in6.sin6_scope_id = if_index;
+  else
+    addr.in6.sin6_scope_id = 0;
   
-  return iface_allowed((struct irec **)vparam, if_index, &addr, netmask, !!(flags & IFACE_TENTATIVE));
+  return iface_allowed((struct iface_param *)vparam, if_index, NULL, &addr, netmask, prefix, flags);
 }
 #endif
 
-static int iface_allowed_v4(struct in_addr local, int if_index, 
+static int iface_allowed_v4(struct in_addr local, int if_index, char *label,
 			    struct in_addr netmask, struct in_addr broadcast, void *vparam)
 {
   union mysockaddr addr;
+  int prefix, bit;
 
   memset(&addr, 0, sizeof(addr));
 #ifdef HAVE_SOCKADDR_SA_LEN
@@ -366,17 +542,141 @@ static int iface_allowed_v4(struct in_addr local, int if_index,
   addr.in.sin_addr = local;
   addr.in.sin_port = htons(daemon->port);
 
-  return iface_allowed((struct irec **)vparam, if_index, &addr, netmask, 0);
+  /* determine prefix length from netmask */
+  for (prefix = 32, bit = 1; (bit & ntohl(netmask.s_addr)) == 0 && prefix != 0; bit = bit << 1, prefix--);
+
+  return iface_allowed((struct iface_param *)vparam, if_index, label, &addr, netmask, prefix, 0);
 }
    
-int enumerate_interfaces(void)
+int enumerate_interfaces(int reset)
 {
-#ifdef HAVE_IPV6
-  if (!iface_enumerate(AF_INET6, &daemon->interfaces, iface_allowed_v6))
-    return 0; 
+  static struct addrlist *spare = NULL;
+  static int done = 0;
+  struct iface_param param;
+  int errsave, ret = 1;
+  struct addrlist *addr, *tmp;
+  struct interface_name *intname;
+  struct irec *iface;
+#ifdef HAVE_AUTH
+  struct auth_zone *zone;
 #endif
 
-  return iface_enumerate(AF_INET, &daemon->interfaces, iface_allowed_v4); 
+  /* Do this max once per select cycle  - also inhibits netlink socket use
+   in TCP child processes. */
+
+  if (reset)
+    {
+      done = 0;
+      return 1;
+    }
+
+  if (done)
+    return 1;
+
+  done = 1;
+
+  if ((param.fd = socket(PF_INET, SOCK_DGRAM, 0)) == -1)
+    return 0;
+ 
+  /* Mark interfaces for garbage collection */
+  for (iface = daemon->interfaces; iface; iface = iface->next) 
+    iface->found = 0;
+
+  /* remove addresses stored against interface_names */
+  for (intname = daemon->int_names; intname; intname = intname->next)
+    {
+      for (addr = intname->addr; addr; addr = tmp)
+	{
+	  tmp = addr->next;
+	  addr->next = spare;
+	  spare = addr;
+	}
+      
+      intname->addr = NULL;
+    }
+
+  /* Remove list of addresses of local interfaces */
+  for (addr = daemon->interface_addrs; addr; addr = tmp)
+    {
+      tmp = addr->next;
+      addr->next = spare;
+      spare = addr;
+    }
+  daemon->interface_addrs = NULL;
+  
+#ifdef HAVE_AUTH
+  /* remove addresses stored against auth_zone subnets, but not 
+   ones configured as address literals */
+  for (zone = daemon->auth_zones; zone; zone = zone->next)
+    if (zone->interface_names)
+      {
+	struct addrlist **up;
+	for (up = &zone->subnet, addr = zone->subnet; addr; addr = tmp)
+	  {
+	    tmp = addr->next;
+	    if (addr->flags & ADDRLIST_LITERAL)
+	      up = &addr->next;
+	    else
+	      {
+		*up = addr->next;
+		addr->next = spare;
+		spare = addr;
+	      }
+	  }
+      }
+#endif
+
+  param.spare = spare;
+  
+#ifdef HAVE_IPV6
+  ret = iface_enumerate(AF_INET6, &param, iface_allowed_v6);
+#endif
+
+  if (ret)
+    ret = iface_enumerate(AF_INET, &param, iface_allowed_v4); 
+ 
+  errsave = errno;
+  close(param.fd);
+  
+  if (option_bool(OPT_CLEVERBIND))
+    { 
+      /* Garbage-collect listeners listening on addresses that no longer exist.
+	 Does nothing when not binding interfaces or for listeners on localhost, 
+	 since the ->iface field is NULL. Note that this needs the protections
+	 against re-entrancy, hence it's here.  It also means there's a possibility,
+	 in OPT_CLEVERBIND mode, that at listener will just disappear after
+	 a call to enumerate_interfaces, this is checked OK on all calls. */
+      struct listener *l, *tmp, **up;
+      
+      for (up = &daemon->listeners, l = daemon->listeners; l; l = tmp)
+	{
+	  tmp = l->next;
+	  
+	  if (!l->iface || l->iface->found)
+	    up = &l->next;
+	  else
+	    {
+	      *up = l->next;
+	      
+	      /* In case it ever returns */
+	      l->iface->done = 0;
+	      
+	      if (l->fd != -1)
+		close(l->fd);
+	      if (l->tcpfd != -1)
+		close(l->tcpfd);
+	      if (l->tftpfd != -1)
+		close(l->tftpfd);
+	      
+	      free(l);
+	    }
+	}
+    }
+  
+  errno = errsave;
+  spare = param.spare;
+    
+  return ret;
 }
 
 /* set NONBLOCK bit on fd: See Stevens 16.6 */
@@ -398,7 +698,7 @@ static int make_sock(union mysockaddr *addr, int type, int dienow)
   
   if ((fd = socket(family, type, 0)) == -1)
     {
-      int port;
+      int port, errsav;
       char *s;
 
       /* No error if the kernel just doesn't support this IP flavour */
@@ -408,6 +708,7 @@ static int make_sock(union mysockaddr *addr, int type, int dienow)
 	return -1;
       
     err:
+      errsav = errno;
       port = prettyprint_addr(addr, daemon->addrbuff);
       if (!option_bool(OPT_NOWILD) && !option_bool(OPT_CLEVERBIND))
 	sprintf(daemon->addrbuff, "port %d", port);
@@ -415,7 +716,9 @@ static int make_sock(union mysockaddr *addr, int type, int dienow)
       
       if (fd != -1)
 	close (fd);
-      
+	
+      errno = errsav;
+
       if (dienow)
 	{
 	  /* failure to bind addresses given by --listen-address at this point
@@ -445,9 +748,9 @@ static int make_sock(union mysockaddr *addr, int type, int dienow)
       if (listen(fd, 5) == -1)
 	goto err;
     }
-  else if (!option_bool(OPT_NOWILD))
+  else if (family == AF_INET)
     {
-      if (family == AF_INET)
+      if (!option_bool(OPT_NOWILD))
 	{
 #if defined(HAVE_LINUX_NETWORK) 
 	  if (setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &opt, sizeof(opt)) == -1)
@@ -458,11 +761,11 @@ static int make_sock(union mysockaddr *addr, int type, int dienow)
 	    goto err;
 #endif
 	}
-#ifdef HAVE_IPV6
-      else if (!set_ipv6pktinfo(fd))
-	goto err;
-#endif
     }
+#ifdef HAVE_IPV6
+  else if (!set_ipv6pktinfo(fd))
+    goto err;
+#endif
   
   return fd;
 }
@@ -572,6 +875,8 @@ static struct listener *create_listeners(union mysockaddr *addr, int do_tftp, in
   struct listener *l = NULL;
   int fd = -1, tcpfd = -1, tftpfd = -1;
 
+  (void)do_tftp;
+
   if (daemon->port != 0)
     {
       fd = make_sock(addr, SOCK_DGRAM, dienow);
@@ -608,7 +913,8 @@ static struct listener *create_listeners(union mysockaddr *addr, int do_tftp, in
       l->family = addr->sa.sa_family;
       l->fd = fd;
       l->tcpfd = tcpfd;
-      l->tftpfd = tftpfd;
+      l->tftpfd = tftpfd;	
+      l->iface = NULL;
     }
 
   return l;
@@ -655,7 +961,7 @@ void create_bound_listeners(int dienow)
   struct iname *if_tmp;
 
   for (iface = daemon->interfaces; iface; iface = iface->next)
-    if (!iface->done && !iface->dad && 
+    if (!iface->done && !iface->dad && iface->found &&
 	(new = create_listeners(&iface->addr, iface->tftp_ok, dienow)))
       {
 	new->iface = iface;
@@ -679,12 +985,58 @@ void create_bound_listeners(int dienow)
     if (!if_tmp->used && 
 	(new = create_listeners(&if_tmp->addr, !!option_bool(OPT_TFTP), dienow)))
       {
-	new->iface = NULL;
 	new->next = daemon->listeners;
 	daemon->listeners = new;
       }
 }
 
+/* In --bind-interfaces, the only access control is the addresses we're listening on. 
+   There's nothing to avoid a query to the address of an internal interface arriving via
+   an external interface where we don't want to accept queries, except that in the usual 
+   case the addresses of internal interfaces are RFC1918. When bind-interfaces in use, 
+   and we listen on an address that looks like it's probably globally routeable, shout.
+
+   The fix is to use --bind-dynamic, which actually checks the arrival interface too.
+   Tough if your platform doesn't support this.
+
+   Note that checking the arrival interface is supported in the standard IPv6 API and
+   always done, so we don't warn about any IPv6 addresses here.
+*/
+
+void warn_bound_listeners(void)
+{
+  struct irec *iface; 	
+  int advice = 0;
+
+  for (iface = daemon->interfaces; iface; iface = iface->next)
+    if (!iface->dns_auth)
+      {
+	if (iface->addr.sa.sa_family == AF_INET)
+	  {
+	    if (!private_net(iface->addr.in.sin_addr, 1))
+	      {
+		inet_ntop(AF_INET, &iface->addr.in.sin_addr, daemon->addrbuff, ADDRSTRLEN);
+		iface->warned = advice = 1;
+		my_syslog(LOG_WARNING, 
+			  _("LOUD WARNING: listening on %s may accept requests via interfaces other than %s"),
+			  daemon->addrbuff, iface->name);
+	      }
+	  }
+      }
+  
+  if (advice)
+    my_syslog(LOG_WARNING, _("LOUD WARNING: use --bind-dynamic rather than --bind-interfaces to avoid DNS amplification attacks via these interface(s)")); 
+}
+
+void warn_int_names(void)
+{
+  struct interface_name *intname;
+ 
+  for (intname = daemon->int_names; intname; intname = intname->next)
+    if (!intname->addr)
+      my_syslog(LOG_WARNING, _("warning: no addresses found for interface %s"), intname->intr);
+}
+ 
 int is_dad_listeners(void)
 {
   struct irec *iface;
@@ -722,7 +1074,7 @@ void join_multicast(int dienow)
 	    
 	    inet_pton(AF_INET6, ALL_RELAY_AGENTS_AND_SERVERS, &mreq.ipv6mr_multiaddr);
 	    
-	    if (daemon->doing_dhcp6 &&
+	    if ((daemon->doing_dhcp6 || daemon->relay6) &&
 		setsockopt(daemon->dhcp6fd, IPPROTO_IPV6, IPV6_JOIN_GROUP, &mreq, sizeof(mreq)) == -1)
 	      err = 1;
 	    
@@ -939,87 +1291,206 @@ void pre_allocate_sfds(void)
       }  
 }
 
+void mark_servers(int flag)
+{
+  struct server *serv;
+
+  /* mark everything with argument flag */
+  for (serv = daemon->servers; serv; serv = serv->next)
+    {
+      if (serv->flags & flag)
+	serv->flags |= SERV_MARK;
+#ifdef HAVE_LOOP
+      /* Give looped servers another chance */
+      serv->flags &= ~SERV_LOOP;
+#endif
+    }
+}
+
+void cleanup_servers(void)
+{
+  struct server *serv, *tmp, **up;
+
+  /* unlink and free anything still marked. */
+  for (serv = daemon->servers, up = &daemon->servers; serv; serv = tmp) 
+    {
+      tmp = serv->next;
+      if (serv->flags & SERV_MARK)
+       {
+         server_gone(serv);
+         *up = serv->next;
+         if (serv->domain)
+	   free(serv->domain);
+	 free(serv);
+       }
+      else 
+       up = &serv->next;
+    }
+
+#ifdef HAVE_LOOP
+  /* Now we have a new set of servers, test for loops. */
+  loop_send_probes();
+#endif
+}
+
+void add_update_server(int flags,
+		       union mysockaddr *addr,
+		       union mysockaddr *source_addr,
+		       const char *interface,
+		       const char *domain)
+{
+  struct server *serv, *next = NULL;
+  char *domain_str = NULL;
+  
+  /* See if there is a suitable candidate, and unmark */
+  for (serv = daemon->servers; serv; serv = serv->next)
+    if (serv->flags & SERV_MARK)
+      {
+	if (domain)
+	  {
+	    if (!(serv->flags & SERV_HAS_DOMAIN) || !hostname_isequal(domain, serv->domain))
+	      continue;
+	  }
+	else
+	  {
+	    if (serv->flags & SERV_HAS_DOMAIN)
+	      continue;
+	  }
+	
+        break;
+      }
+
+  if (serv)
+    {
+      domain_str = serv->domain;
+      next = serv->next;
+    }
+  else if ((serv = whine_malloc(sizeof (struct server))))
+    {
+      /* Not found, create a new one. */
+      if (domain && !(domain_str = whine_malloc(strlen(domain)+1)))
+	{
+	  free(serv);
+          serv = NULL;
+        }
+      else
+        {
+	  struct server *s;
+	  /* Add to the end of the chain, for order */
+	  if (!daemon->servers)
+	    daemon->servers = serv;
+	  else
+	    {
+	      for (s = daemon->servers; s->next; s = s->next);
+	      s->next = serv;
+	    }
+	  if (domain)
+	    strcpy(domain_str, domain);
+	}
+    }
+  
+  if (serv)
+    {
+      memset(serv, 0, sizeof(struct server));
+      serv->flags = flags;
+      serv->domain = domain_str;
+      serv->next = next;
+      serv->queries = serv->failed_queries = 0;
+      serv->edns_pktsz = daemon->edns_pktsz;
+#ifdef HAVE_LOOP
+      serv->uid = rand32();
+#endif      
+
+      if (domain)
+	serv->flags |= SERV_HAS_DOMAIN;
+      
+      if (interface)
+	strcpy(serv->interface, interface);      
+      if (addr)
+	serv->addr = *addr;
+      if (source_addr)
+	serv->source_addr = *source_addr;
+    }
+}
 
 void check_servers(void)
 {
   struct irec *iface;
-  struct server *new, *tmp, *ret = NULL;
+  struct server *serv;
   int port = 0;
 
   /* interface may be new since startup */
   if (!option_bool(OPT_NOWILD))
-    enumerate_interfaces();
+    enumerate_interfaces(0);
   
-  for (new = daemon->servers; new; new = tmp)
+  for (serv = daemon->servers; serv; serv = serv->next)
     {
-      tmp = new->next;
-      
-      if (!(new->flags & (SERV_LITERAL_ADDRESS | SERV_NO_ADDR | SERV_USE_RESOLV | SERV_NO_REBIND)))
+       if (!(serv->flags & (SERV_LITERAL_ADDRESS | SERV_NO_ADDR | SERV_USE_RESOLV | SERV_NO_REBIND)))
 	{
-	  port = prettyprint_addr(&new->addr, daemon->namebuff);
+	  port = prettyprint_addr(&serv->addr, daemon->namebuff);
 
 	  /* 0.0.0.0 is nothing, the stack treats it like 127.0.0.1 */
-	  if (new->addr.sa.sa_family == AF_INET &&
-	      new->addr.in.sin_addr.s_addr == 0)
+	  if (serv->addr.sa.sa_family == AF_INET &&
+	      serv->addr.in.sin_addr.s_addr == 0)
 	    {
-	      free(new);
+	      serv->flags |= SERV_MARK;
 	      continue;
 	    }
 
 	  for (iface = daemon->interfaces; iface; iface = iface->next)
-	    if (sockaddr_isequal(&new->addr, &iface->addr))
+	    if (sockaddr_isequal(&serv->addr, &iface->addr))
 	      break;
 	  if (iface)
 	    {
 	      my_syslog(LOG_WARNING, _("ignoring nameserver %s - local interface"), daemon->namebuff);
-	      free(new);
+	      serv->flags |= SERV_MARK;
 	      continue;
 	    }
 	  
 	  /* Do we need a socket set? */
-	  if (!new->sfd && 
-	      !(new->sfd = allocate_sfd(&new->source_addr, new->interface)) &&
+	  if (!serv->sfd && 
+	      !(serv->sfd = allocate_sfd(&serv->source_addr, serv->interface)) &&
 	      errno != 0)
 	    {
 	      my_syslog(LOG_WARNING, 
 			_("ignoring nameserver %s - cannot make/bind socket: %s"),
 			daemon->namebuff, strerror(errno));
-	      free(new);
+	      serv->flags |= SERV_MARK;
 	      continue;
 	    }
 	}
       
-      /* reverse order - gets it right. */
-      new->next = ret;
-      ret = new;
-      
-      if (!(new->flags & SERV_NO_REBIND))
+      if (!(serv->flags & SERV_NO_REBIND) && !(serv->flags & SERV_LITERAL_ADDRESS))
 	{
-	  if (new->flags & (SERV_HAS_DOMAIN | SERV_FOR_NODOTS | SERV_USE_RESOLV))
+	  if (serv->flags & (SERV_HAS_DOMAIN | SERV_FOR_NODOTS | SERV_USE_RESOLV))
 	    {
 	      char *s1, *s2;
-	      if (!(new->flags & SERV_HAS_DOMAIN))
+	      if (!(serv->flags & SERV_HAS_DOMAIN))
 		s1 = _("unqualified"), s2 = _("names");
-	      else if (strlen(new->domain) == 0)
+	      else if (strlen(serv->domain) == 0)
 		s1 = _("default"), s2 = "";
 	      else
-		s1 = _("domain"), s2 = new->domain;
+		s1 = _("domain"), s2 = serv->domain;
 	      
-	      if (new->flags & SERV_NO_ADDR)
+	      if (serv->flags & SERV_NO_ADDR)
 		my_syslog(LOG_INFO, _("using local addresses only for %s %s"), s1, s2);
-	      else if (new->flags & SERV_USE_RESOLV)
+	      else if (serv->flags & SERV_USE_RESOLV)
 		my_syslog(LOG_INFO, _("using standard nameservers for %s %s"), s1, s2);
-	      else if (!(new->flags & SERV_LITERAL_ADDRESS))
+	      else 
 		my_syslog(LOG_INFO, _("using nameserver %s#%d for %s %s"), daemon->namebuff, port, s1, s2);
 	    }
-	  else if (new->interface[0] != 0)
-	    my_syslog(LOG_INFO, _("using nameserver %s#%d(via %s)"), daemon->namebuff, port, new->interface); 
+#ifdef HAVE_LOOP
+	  else if (serv->flags & SERV_LOOP)
+	    my_syslog(LOG_INFO, _("NOT using nameserver %s#%d - query loop detected"), daemon->namebuff, port); 
+#endif
+	  else if (serv->interface[0] != 0)
+	    my_syslog(LOG_INFO, _("using nameserver %s#%d(via %s)"), daemon->namebuff, port, serv->interface); 
 	  else
 	    my_syslog(LOG_INFO, _("using nameserver %s#%d"), daemon->namebuff, port); 
 	}
     }
-  
-  daemon->servers = ret;
+
+  cleanup_servers();
 }
 
 /* Return zero if no servers found, in that case we keep polling.
@@ -1028,9 +1499,6 @@ int reload_servers(char *fname)
 {
   FILE *f;
   char *line;
-  struct server *old_servers = NULL;
-  struct server *new_servers = NULL;
-  struct server *serv;
   int gotone = 0;
 
   /* buff happens to be MAXDNAME long... */
@@ -1039,28 +1507,9 @@ int reload_servers(char *fname)
       my_syslog(LOG_ERR, _("failed to read %s: %s"), fname, strerror(errno));
       return 0;
     }
-  
-  /* move old servers to free list - we can reuse the memory 
-     and not risk malloc if there are the same or fewer new servers. 
-     Servers which were specced on the command line go to the new list. */
-  for (serv = daemon->servers; serv;)
-    {
-      struct server *tmp = serv->next;
-      if (serv->flags & SERV_FROM_RESOLV)
-	{
-	  serv->next = old_servers;
-	  old_servers = serv; 
-	  /* forward table rules reference servers, so have to blow them away */
-	  server_gone(serv);
-	}
-      else
-	{
-	  serv->next = new_servers;
-	  new_servers = serv;
-	}
-      serv = tmp;
-    }
-  
+   
+  mark_servers(SERV_FROM_RESOLV);
+    
   while ((line = fgets(daemon->namebuff, MAXDNAME, f)))
     {
       union mysockaddr addr, source_addr;
@@ -1119,64 +1568,41 @@ int reload_servers(char *fname)
 	continue;
 #endif 
 
-      if (old_servers)
-	{
-	  serv = old_servers;
-	  old_servers = old_servers->next;
-	}
-      else if (!(serv = whine_malloc(sizeof (struct server))))
-	continue;
-      
-      /* this list is reverse ordered: 
-	 it gets reversed again in check_servers */
-      serv->next = new_servers;
-      new_servers = serv;
-      serv->addr = addr;
-      serv->source_addr = source_addr;
-      serv->domain = NULL;
-      serv->interface[0] = 0;
-      serv->sfd = NULL;
-      serv->flags = SERV_FROM_RESOLV;
-      serv->queries = serv->failed_queries = 0;
+      add_update_server(SERV_FROM_RESOLV, &addr, &source_addr, NULL, NULL);
       gotone = 1;
     }
   
-  /* Free any memory not used. */
-  while (old_servers)
-    {
-      struct server *tmp = old_servers->next;
-      free(old_servers);
-      old_servers = tmp;
-    }
-
-  daemon->servers = new_servers;
   fclose(f);
+  cleanup_servers();
 
   return gotone;
 }
 
-
-/* Use an IPv4 listener socket for ioctling */
-struct in_addr get_ifaddr(char *intr)
+/* Called when addresses are added or deleted from an interface */
+void newaddress(time_t now)
 {
-  struct listener *l;
-  struct ifreq ifr;
-  struct sockaddr_in ret;
+  (void)now;
   
-  ret.sin_addr.s_addr = -1;
-
-  for (l = daemon->listeners; 
-       l && (l->family != AF_INET || l->fd == -1);
-       l = l->next);
+  if (option_bool(OPT_CLEVERBIND) || option_bool(OPT_LOCAL_SERVICE) ||
+      daemon->doing_dhcp6 || daemon->relay6 || daemon->doing_ra)
+    enumerate_interfaces(0);
   
-  strncpy(ifr.ifr_name, intr, IF_NAMESIZE);
-  ifr.ifr_addr.sa_family = AF_INET;
+  if (option_bool(OPT_CLEVERBIND))
+    create_bound_listeners(0);
   
-  if (l &&  ioctl(l->fd, SIOCGIFADDR, &ifr) != -1)
-    memcpy(&ret, &ifr.ifr_addr, sizeof(ret)); 
+#ifdef HAVE_DHCP6
+  if (daemon->doing_dhcp6 || daemon->relay6 || daemon->doing_ra)
+    join_multicast(0);
   
-  return ret.sin_addr;
+  if (daemon->doing_dhcp6 || daemon->doing_ra)
+    dhcp_construct_contexts(now);
+  
+  if (daemon->doing_dhcp6)
+    lease_find_interfaces(now);
+#endif
 }
+
+
 
 
 

@@ -1,4 +1,4 @@
-/* dnsmasq is Copyright (c) 2000-2013 Simon Kelley
+/* dnsmasq is Copyright (c) 2000-2015 Simon Kelley
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -35,6 +35,11 @@ const char* introspection_xml_template =
 "    <method name=\"GetVersion\">\n"
 "      <arg name=\"version\" direction=\"out\" type=\"s\"/>\n"
 "    </method>\n"
+#ifdef HAVE_LOOP
+"    <method name=\"GetLoopServers\">\n"
+"      <arg name=\"server\" direction=\"out\" type=\"as\"/>\n"
+"    </method>\n"
+#endif
 "    <method name=\"SetServers\">\n"
 "      <arg name=\"servers\" direction=\"in\" type=\"av\"/>\n"
 "    </method>\n"
@@ -43,6 +48,12 @@ const char* introspection_xml_template =
 "    </method>\n"
 "    <method name=\"SetServersEx\">\n"
 "      <arg name=\"servers\" direction=\"in\" type=\"aas\"/>\n"
+"    </method>\n"
+"    <method name=\"SetFilterWin2KOption\">\n"
+"      <arg name=\"filterwin2k\" direction=\"in\" type=\"b\"/>\n"
+"    </method>\n"
+"    <method name=\"SetBogusPrivOption\">\n"
+"      <arg name=\"boguspriv\" direction=\"in\" type=\"b\"/>\n"
 "    </method>\n"
 "    <signal name=\"DhcpLeaseAdded\">\n"
 "      <arg name=\"ipaddr\" type=\"s\"/>\n"
@@ -59,6 +70,21 @@ const char* introspection_xml_template =
 "      <arg name=\"hwaddr\" type=\"s\"/>\n"
 "      <arg name=\"hostname\" type=\"s\"/>\n"
 "    </signal>\n"
+#ifdef HAVE_DHCP
+"    <method name=\"AddDhcpLease\">\n"
+"       <arg name=\"ipaddr\" type=\"s\"/>\n"
+"       <arg name=\"hwaddr\" type=\"s\"/>\n"
+"       <arg name=\"hostname\" type=\"ay\"/>\n"
+"       <arg name=\"clid\" type=\"ay\"/>\n"
+"       <arg name=\"lease_duration\" type=\"u\"/>\n"
+"       <arg name=\"ia_id\" type=\"u\"/>\n"
+"       <arg name=\"is_temporary\" type=\"b\"/>\n"
+"    </method>\n"
+"    <method name=\"DeleteDhcpLease\">\n"
+"       <arg name=\"ipaddr\" type=\"s\"/>\n"
+"       <arg name=\"success\" type=\"b\" direction=\"out\"/>\n"
+"    </method>\n"
+#endif
 "  </interface>\n"
 "</node>\n";
 
@@ -108,108 +134,6 @@ static void remove_watch(DBusWatch *watch, void *data)
   w = data; /* no warning */
 }
 
-static void add_update_server(union mysockaddr *addr,
-                              union mysockaddr *source_addr,
-			      const char *interface,
-                              const char *domain)
-{
-  struct server *serv;
-
-  /* See if there is a suitable candidate, and unmark */
-  for (serv = daemon->servers; serv; serv = serv->next)
-    if ((serv->flags & SERV_FROM_DBUS) &&
-       (serv->flags & SERV_MARK))
-      {
-	if (domain)
-	  {
-	    if (!(serv->flags & SERV_HAS_DOMAIN) || !hostname_isequal(domain, serv->domain))
-	      continue;
-	  }
-	else
-	  {
-	    if (serv->flags & SERV_HAS_DOMAIN)
-	      continue;
-	  }
-	
-	serv->flags &= ~SERV_MARK;
-
-        break;
-      }
-  
-  if (!serv && (serv = whine_malloc(sizeof (struct server))))
-    {
-      /* Not found, create a new one. */
-      memset(serv, 0, sizeof(struct server));
-      
-      if (domain && !(serv->domain = whine_malloc(strlen(domain)+1)))
-	{
-	  free(serv);
-          serv = NULL;
-        }
-      else
-        {
-	  serv->next = daemon->servers;
-	  daemon->servers = serv;
-	  serv->flags = SERV_FROM_DBUS;
-	  if (domain)
-	    {
-	      strcpy(serv->domain, domain);
-	      serv->flags |= SERV_HAS_DOMAIN;
-	    }
-	}
-    }
-  
-  if (serv)
-    {
-      if (interface)
-	strcpy(serv->interface, interface);
-      else
-	serv->interface[0] = 0;
-            
-      if (source_addr->in.sin_family == AF_INET &&
-          addr->in.sin_addr.s_addr == 0 &&
-          serv->domain)
-        serv->flags |= SERV_NO_ADDR;
-      else
-        {
-          serv->flags &= ~SERV_NO_ADDR;
-          serv->addr = *addr;
-          serv->source_addr = *source_addr;
-        }
-    }
-}
-
-static void mark_dbus(void)
-{
-  struct server *serv;
-
-  /* mark everything from DBUS */
-  for (serv = daemon->servers; serv; serv = serv->next)
-    if (serv->flags & SERV_FROM_DBUS)
-      serv->flags |= SERV_MARK;
-}
-
-static void cleanup_dbus()
-{
-  struct server *serv, *tmp, **up;
-
-  /* unlink and free anything still marked. */
-  for (serv = daemon->servers, up = &daemon->servers; serv; serv = tmp) 
-    {
-      tmp = serv->next;
-      if (serv->flags & SERV_MARK)
-       {
-         server_gone(serv);
-         *up = serv->next;
-         if (serv->domain)
-	   free(serv->domain);
-	 free(serv);
-       }
-      else 
-       up = &serv->next;
-    }
-}
-
 static void dbus_read_servers(DBusMessage *message)
 {
   DBusMessageIter iter;
@@ -218,8 +142,8 @@ static void dbus_read_servers(DBusMessage *message)
   
   dbus_message_iter_init(message, &iter);
 
-  mark_dbus();
-
+  mark_servers(SERV_FROM_DBUS);
+  
   while (1)
     {
       int skip = 0;
@@ -252,13 +176,16 @@ static void dbus_read_servers(DBusMessage *message)
 	      dbus_message_iter_get_basic(&iter, &p[i]);
 	      dbus_message_iter_next (&iter);
 	      if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_BYTE)
-		break;
+		{
+		  i++;
+		  break;
+		}
 	    }
 
 #ifndef HAVE_IPV6
 	  my_syslog(LOG_WARNING, _("attempt to set an IPv6 server address via DBus - no IPv6 support"));
 #else
-	  if (i == sizeof(struct in6_addr)-1)
+	  if (i == sizeof(struct in6_addr))
 	    {
 	      memcpy(&addr.in6.sin6_addr, p, sizeof(struct in6_addr));
 #ifdef HAVE_SOCKADDR_SA_LEN
@@ -289,14 +216,37 @@ static void dbus_read_servers(DBusMessage *message)
 	  domain = NULL;
 	
 	if (!skip)
-	  add_update_server(&addr, &source_addr, NULL, domain);
+	  add_update_server(SERV_FROM_DBUS, &addr, &source_addr, NULL, domain);
      
       } while (dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_STRING); 
     }
    
   /* unlink and free anything still marked. */
-  cleanup_dbus();
+  cleanup_servers();
 }
+
+#ifdef HAVE_LOOP
+static DBusMessage *dbus_reply_server_loop(DBusMessage *message)
+{
+  DBusMessageIter args, args_iter;
+  struct server *serv;
+  DBusMessage *reply = dbus_message_new_method_return(message);
+   
+  dbus_message_iter_init_append (reply, &args);
+  dbus_message_iter_open_container (&args, DBUS_TYPE_ARRAY,DBUS_TYPE_STRING_AS_STRING, &args_iter);
+
+  for (serv = daemon->servers; serv; serv = serv->next)
+    if (serv->flags & SERV_LOOP)
+      {
+	prettyprint_addr(&serv->addr, daemon->addrbuff);
+	dbus_message_iter_append_basic (&args_iter, DBUS_TYPE_STRING, &daemon->addrbuff);
+      }
+  
+  dbus_message_iter_close_container (&args, &args_iter);
+
+  return reply;
+}
+#endif
 
 static DBusMessage* dbus_read_servers_ex(DBusMessage *message, int strings)
 {
@@ -304,8 +254,6 @@ static DBusMessage* dbus_read_servers_ex(DBusMessage *message, int strings)
   DBusMessage *error = NULL;
   const char *addr_err;
   char *dup = NULL;
-  
-  my_syslog(LOG_INFO, _("setting upstream servers from DBus"));
   
   if (!dbus_message_iter_init(message, &iter))
     {
@@ -321,7 +269,7 @@ static DBusMessage* dbus_read_servers_ex(DBusMessage *message, int strings)
                                     strings ? "Expected array of string" : "Expected array of string arrays");
      }
  
-  mark_dbus();
+  mark_servers(SERV_FROM_DBUS);
 
   /* array_iter points to each "as" element in the outer array */
   dbus_message_iter_recurse(&iter, &array_iter);
@@ -329,6 +277,7 @@ static DBusMessage* dbus_read_servers_ex(DBusMessage *message, int strings)
     {
       const char *str = NULL;
       union  mysockaddr addr, source_addr;
+      int flags = 0;
       char interface[IF_NAMESIZE];
       char *str_addr, *str_domain = NULL;
 
@@ -418,16 +367,19 @@ static DBusMessage* dbus_read_servers_ex(DBusMessage *message, int strings)
       memset(&interface, 0, sizeof(interface));
 
       /* parse the IP address */
-      addr_err = parse_server(str_addr, &addr, &source_addr, (char *) &interface, NULL);
-
-      if (addr_err)
-        {
+      if ((addr_err = parse_server(str_addr, &addr, &source_addr, (char *) &interface, &flags)))
+	{
           error = dbus_message_new_error_printf(message, DBUS_ERROR_INVALID_ARGS,
                                                 "Invalid IP address '%s': %s",
                                                 str, addr_err);
           break;
         }
-
+      
+      /* 0.0.0.0 for server address == NULL, for Dbus */
+      if (addr.in.sin_family == AF_INET &&
+          addr.in.sin_addr.s_addr == 0)
+        flags |= SERV_NO_ADDR;
+      
       if (strings)
 	{
 	  char *p;
@@ -441,7 +393,7 @@ static DBusMessage* dbus_read_servers_ex(DBusMessage *message, int strings)
 	    else 
 	      p = NULL;
 	    
-	    add_update_server(&addr, &source_addr, interface, str_domain);
+	    add_update_server(flags | SERV_FROM_DBUS, &addr, &source_addr, interface, str_domain);
 	  } while ((str_domain = p));
 	}
       else
@@ -456,7 +408,7 @@ static DBusMessage* dbus_read_servers_ex(DBusMessage *message, int strings)
 	      dbus_message_iter_get_basic(&string_iter, &str);
 	    dbus_message_iter_next (&string_iter);
 	    
-	    add_update_server(&addr, &source_addr, interface, str);
+	    add_update_server(flags | SERV_FROM_DBUS, &addr, &source_addr, interface, str);
 	  } while (dbus_message_iter_get_arg_type(&string_iter) == DBUS_TYPE_STRING);
 	}
 	 
@@ -464,7 +416,7 @@ static DBusMessage* dbus_read_servers_ex(DBusMessage *message, int strings)
       dbus_message_iter_next(&array_iter);
     }
 
-  cleanup_dbus();
+  cleanup_servers();
 
   if (dup)
     free(dup);
@@ -472,12 +424,203 @@ static DBusMessage* dbus_read_servers_ex(DBusMessage *message, int strings)
   return error;
 }
 
+static DBusMessage *dbus_set_bool(DBusMessage *message, int flag, char *name)
+{
+  DBusMessageIter iter;
+  dbus_bool_t enabled;
+
+  if (!dbus_message_iter_init(message, &iter) || dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_BOOLEAN)
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS, "Expected boolean argument");
+  
+  dbus_message_iter_get_basic(&iter, &enabled);
+
+  if (enabled)
+    { 
+      my_syslog(LOG_INFO, _("Enabling --%s option from D-Bus"), name);
+      set_option_bool(flag);
+    }
+  else
+    {
+      my_syslog(LOG_INFO, _("Disabling --%s option from D-Bus"), name);
+      reset_option_bool(flag);
+    }
+
+  return NULL;
+}
+
+#ifdef HAVE_DHCP
+static DBusMessage *dbus_add_lease(DBusMessage* message)
+{
+  struct dhcp_lease *lease;
+  const char *ipaddr, *hwaddr, *hostname, *tmp;
+  const unsigned char* clid;
+  int clid_len, hostname_len, hw_len, hw_type;
+  dbus_uint32_t expires, ia_id;
+  dbus_bool_t is_temporary;
+  struct all_addr addr;
+  time_t now = dnsmasq_time();
+  unsigned char dhcp_chaddr[DHCP_CHADDR_MAX];
+
+  DBusMessageIter iter, array_iter;
+  if (!dbus_message_iter_init(message, &iter))
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				  "Failed to initialize dbus message iter");
+
+  if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_STRING)
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				  "Expected string as first argument");
+
+  dbus_message_iter_get_basic(&iter, &ipaddr);
+  dbus_message_iter_next(&iter);
+
+  if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_STRING)
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				  "Expected string as second argument");
+    
+  dbus_message_iter_get_basic(&iter, &hwaddr);
+  dbus_message_iter_next(&iter);
+
+  if ((dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY) ||
+      (dbus_message_iter_get_element_type(&iter) != DBUS_TYPE_BYTE))
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				  "Expected byte array as third argument");
+    
+  dbus_message_iter_recurse(&iter, &array_iter);
+  dbus_message_iter_get_fixed_array(&array_iter, &hostname, &hostname_len);
+  tmp = memchr(hostname, '\0', hostname_len);
+  if (tmp)
+    {
+      if (tmp == &hostname[hostname_len - 1])
+	hostname_len--;
+      else
+	return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				      "Hostname contains an embedded NUL character");
+    }
+  dbus_message_iter_next(&iter);
+
+  if ((dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY) ||
+      (dbus_message_iter_get_element_type(&iter) != DBUS_TYPE_BYTE))
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				  "Expected byte array as fourth argument");
+
+  dbus_message_iter_recurse(&iter, &array_iter);
+  dbus_message_iter_get_fixed_array(&array_iter, &clid, &clid_len);
+  dbus_message_iter_next(&iter);
+
+  if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_UINT32)
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				  "Expected uint32 as fifth argument");
+    
+  dbus_message_iter_get_basic(&iter, &expires);
+  dbus_message_iter_next(&iter);
+
+  if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_UINT32)
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+                                    "Expected uint32 as sixth argument");
+  
+  dbus_message_iter_get_basic(&iter, &ia_id);
+  dbus_message_iter_next(&iter);
+
+  if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_BOOLEAN)
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				  "Expected uint32 as sixth argument");
+
+  dbus_message_iter_get_basic(&iter, &is_temporary);
+
+  if (inet_pton(AF_INET, ipaddr, &addr.addr.addr4))
+    {
+      if (ia_id != 0 || is_temporary)
+	return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				      "ia_id and is_temporary must be zero for IPv4 lease");
+      
+      if (!(lease = lease_find_by_addr(addr.addr.addr4)))
+    	lease = lease4_allocate(addr.addr.addr4);
+    }
+#ifdef HAVE_DHCP6
+  else if (inet_pton(AF_INET6, ipaddr, &addr.addr.addr6))
+    {
+      if (!(lease = lease6_find_by_addr(&addr.addr.addr6, 128, 0)))
+	lease = lease6_allocate(&addr.addr.addr6,
+				is_temporary ? LEASE_TA : LEASE_NA);
+      lease_set_iaid(lease, ia_id);
+    }
+#endif
+  else
+    return dbus_message_new_error_printf(message, DBUS_ERROR_INVALID_ARGS,
+					 "Invalid IP address '%s'", ipaddr);
+   
+  hw_len = parse_hex((char*)hwaddr, dhcp_chaddr, DHCP_CHADDR_MAX, NULL,
+		     &hw_type);
+  if (hw_type == 0 && hw_len != 0)
+    hw_type = ARPHRD_ETHER;
+
+    lease_set_hwaddr(lease, dhcp_chaddr, clid, hw_len, hw_type,
+                   clid_len, now, 0);
+  lease_set_expires(lease, expires, now);
+  if (hostname_len != 0)
+    lease_set_hostname(lease, hostname, 0, get_domain(lease->addr), NULL);
+    
+  lease_update_file(now);
+  lease_update_dns(0);
+
+  return NULL;
+}
+
+static DBusMessage *dbus_del_lease(DBusMessage* message)
+{
+  struct dhcp_lease *lease;
+  DBusMessageIter iter;
+  const char *ipaddr;
+  DBusMessage *reply;
+  struct all_addr addr;
+  dbus_bool_t ret = 1;
+  time_t now = dnsmasq_time();
+
+  if (!dbus_message_iter_init(message, &iter))
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				  "Failed to initialize dbus message iter");
+   
+  if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_STRING)
+    return dbus_message_new_error(message, DBUS_ERROR_INVALID_ARGS,
+				  "Expected string as first argument");
+   
+  dbus_message_iter_get_basic(&iter, &ipaddr);
+
+  if (inet_pton(AF_INET, ipaddr, &addr.addr.addr4))
+    lease = lease_find_by_addr(addr.addr.addr4);
+#ifdef HAVE_DHCP6
+  else if (inet_pton(AF_INET6, ipaddr, &addr.addr.addr6))
+    lease = lease6_find_by_addr(&addr.addr.addr6, 128, 0);
+#endif
+  else
+    return dbus_message_new_error_printf(message, DBUS_ERROR_INVALID_ARGS,
+					 "Invalid IP address '%s'", ipaddr);
+    
+  if (lease)
+    {
+      lease_prune(lease, now);
+      lease_update_file(now);
+      lease_update_dns(0);
+    }
+  else
+    ret = 0;
+  
+  if ((reply = dbus_message_new_method_return(message)))
+    dbus_message_append_args(reply, DBUS_TYPE_BOOLEAN, &ret,
+			     DBUS_TYPE_INVALID);
+  
+    
+  return reply;
+}
+#endif
+
 DBusHandlerResult message_handler(DBusConnection *connection, 
 				  DBusMessage *message, 
 				  void *user_data)
 {
   char *method = (char *)dbus_message_get_member(message);
   DBusMessage *reply = NULL;
+  int clear_cache = 0, new_servers = 0;
     
   if (dbus_message_is_method_call(message, DBUS_INTERFACE_INTROSPECTABLE, "Introspect"))
     {
@@ -499,26 +642,60 @@ DBusHandlerResult message_handler(DBusConnection *connection,
       
       dbus_message_append_args(reply, DBUS_TYPE_STRING, &v, DBUS_TYPE_INVALID);
     }
+#ifdef HAVE_LOOP
+  else if (strcmp(method, "GetLoopServers") == 0)
+    {
+      reply = dbus_reply_server_loop(message);
+    }
+#endif
   else if (strcmp(method, "SetServers") == 0)
     {
-      my_syslog(LOG_INFO, _("setting upstream servers from DBus"));
       dbus_read_servers(message);
-      check_servers();
+      new_servers = 1;
     }
   else if (strcmp(method, "SetServersEx") == 0)
     {
       reply = dbus_read_servers_ex(message, 0);
-      check_servers();
+      new_servers = 1;
     }
   else if (strcmp(method, "SetDomainServers") == 0)
     {
       reply = dbus_read_servers_ex(message, 1);
-      check_servers();
+      new_servers = 1;
     }
+  else if (strcmp(method, "SetFilterWin2KOption") == 0)
+    {
+      reply = dbus_set_bool(message, OPT_FILTER, "filterwin2k");
+    }
+  else if (strcmp(method, "SetBogusPrivOption") == 0)
+    {
+      reply = dbus_set_bool(message, OPT_BOGUSPRIV, "bogus-priv");
+    }
+#ifdef HAVE_DHCP
+  else if (strcmp(method, "AddDhcpLease") == 0)
+    {
+      reply = dbus_add_lease(message);
+    }
+  else if (strcmp(method, "DeleteDhcpLease") == 0)
+    {
+      reply = dbus_del_lease(message);
+    }
+#endif
   else if (strcmp(method, "ClearCache") == 0)
-    clear_cache_and_reload(dnsmasq_time());
+    clear_cache = 1;
   else
     return (DBUS_HANDLER_RESULT_NOT_YET_HANDLED);
+   
+  if (new_servers)
+    {
+      my_syslog(LOG_INFO, _("setting upstream servers from DBus"));
+      check_servers();
+      if (option_bool(OPT_RELOAD))
+	clear_cache = 1;
+    }
+
+  if (clear_cache)
+    clear_cache_and_reload(dnsmasq_time());
   
   method = user_data; /* no warning */
 
@@ -572,8 +749,7 @@ char *dbus_init(void)
 }
  
 
-void set_dbus_listeners(int *maxfdp,
-			fd_set *rset, fd_set *wset, fd_set *eset)
+void set_dbus_listeners(void)
 {
   struct watch *w;
   
@@ -583,19 +759,17 @@ void set_dbus_listeners(int *maxfdp,
 	unsigned int flags = dbus_watch_get_flags(w->watch);
 	int fd = dbus_watch_get_unix_fd(w->watch);
 	
-	bump_maxfd(fd, maxfdp);
-	
 	if (flags & DBUS_WATCH_READABLE)
-	  FD_SET(fd, rset);
+	  poll_listen(fd, POLLIN);
 	
 	if (flags & DBUS_WATCH_WRITABLE)
-	  FD_SET(fd, wset);
+	  poll_listen(fd, POLLOUT);
 	
-	FD_SET(fd, eset);
+	poll_listen(fd, POLLERR);
       }
 }
 
-void check_dbus_listeners(fd_set *rset, fd_set *wset, fd_set *eset)
+void check_dbus_listeners()
 {
   DBusConnection *connection = (DBusConnection *)daemon->dbus;
   struct watch *w;
@@ -606,13 +780,13 @@ void check_dbus_listeners(fd_set *rset, fd_set *wset, fd_set *eset)
 	unsigned int flags = 0;
 	int fd = dbus_watch_get_unix_fd(w->watch);
 	
-	if (FD_ISSET(fd, rset))
+	if (poll_check(fd, POLLIN))
 	  flags |= DBUS_WATCH_READABLE;
 	
-	if (FD_ISSET(fd, wset))
+	if (poll_check(fd, POLLOUT))
 	  flags |= DBUS_WATCH_WRITABLE;
 	
-	if (FD_ISSET(fd, eset))
+	if (poll_check(fd, POLLERR))
 	  flags |= DBUS_WATCH_ERROR;
 
 	if (flags != 0)
@@ -647,7 +821,7 @@ void emit_dbus_signal(int action, struct dhcp_lease *lease, char *hostname)
    if (lease->flags & (LEASE_TA | LEASE_NA))
      {
        print_mac(mac, lease->clid, lease->clid_len);
-       inet_ntop(AF_INET6, lease->hwaddr, daemon->addrbuff, ADDRSTRLEN);
+       inet_ntop(AF_INET6, &lease->addr6, daemon->addrbuff, ADDRSTRLEN);
      }
    else
 #endif
