@@ -1,8 +1,33 @@
+dnsmasq (2.79-1) unstable; urgency=low
+
+   * New upstream. (closes: #888200)
+   * Fix trust-anchor regex in init script. (closes: #884347)
+   * Fix exit code for dhcp_release6 (closes: #833596)
+   * Add project homepage to control file. (closes: #887764)
+   * New binary package dnsmasq-base-lua, includes Lua support.
+   * Remove hardwired shlibs dependency for libnettle 3.3 and
+     fix code to avoid ABI breakage as long as compiled against
+     libnettle 3.4 or later. (closes: #891315)
+
+ -- Simon Kelley <simon@thekelleys.org.uk>  Fri, 16 Feb 2018 19:54:22 +0000
+
+dnsmasq (2.78-3) unstable; urgency=high
+
+   * Make failure of pidfile chown a warning. (closes: #889857)
+
+ -- Simon Kelley <simon@thekelleys.org.uk>  Thu, 8 Feb 2018 21:26:30 +0000
+
+dnsmasq (2.78-2) unstable; urgency=high
+
+   * Change ownership of pid file, to keep systemd happy. (closes: #889336)
+
+ -- Simon Kelley <simon@thekelleys.org.uk>  Tue, 6 Feb 2018 17:21:30 +0000
+
 dnsmasq (2.78-1) unstable; urgency=high
 
    * New upstream.
      Security fixes for CVE-2017-13704  (closes: #877102)
-     Security fixes for CVE-2017-14491 - CVE-2017-14496 inclusive.	
+     Security fixes for CVE-2017-14491 - CVE-2017-14496 inclusive.
 
  -- Simon Kelley <simon@thekelleys.org.uk>  Sun, 29 Sep 2017 21:34:00 +0000
 
@@ -19,7 +44,7 @@ dnsmasq (2.77-1) unstable; urgency=low
      includes port=0 to disable DNS.
    * Handle gratuitous format change in /usr/share/dns/root.ds
      (closes: #858506) (closes: #860064)
-   * Add lsb-base dependancy.
+   * Add lsb-base dependency.
 
  -- Simon Kelley <simon@thekelleys.org.uk>  Tue, 11 Apr 2017 14:19:20 +0000
 

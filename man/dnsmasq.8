@@ -182,7 +182,8 @@ OS: this was the default behaviour in versions prior to 2.43.
 Do not use ports less than that given as source for outbound DNS
 queries. Dnsmasq picks random ports as source for outbound queries:
 when this option is given, the ports used will always to larger
-than that specified. Useful for systems behind firewalls. 
+than that specified. Useful for systems behind firewalls. If not specified,
+defaults to 1024.
 .TP
 .B --max-port=<port>
 Use ports lower than that given as source for outbound DNS queries.
@@ -241,7 +242,7 @@ configuration, indeed
 .B --auth-server
 will override these and provide a different DNS service on the
 specified interface. The <domain> is the "glue record". It should
-resolve in the global DNS to a A and/or AAAA record which points to
+resolve in the global DNS to an A and/or AAAA record which points to
 the address dnsmasq is listening on. When an interface is specified,
 it may be qualified with "/4" or "/6" to specify only the IPv4 or IPv6
 addresses associated with the interface.
@@ -464,7 +465,7 @@ is a synonym for
 .B server
 to make configuration files clearer in this case.
 
-IPv6 addresses may include a %interface scope-id, eg
+IPv6 addresses may include an %interface scope-id, eg
 fe80::202:a412:4512:7bbf%eth0.
 
 The optional string after the @ character tells dnsmasq how to set the source of
@@ -597,7 +598,7 @@ hosts files), from DHCP, from --interface-name or from another
 .B --cname.
 If the target does not satisfy this
 criteria, the whole cname is ignored. The cname must be unique, but it
-is permissable to have more than one cname pointing to the same target. Indeed
+is permissible to have more than one cname pointing to the same target. Indeed
 it's possible to declare multiple cnames to a target in a single line, like so:
 .B --cname=cname1,cname2,target
 
@@ -625,13 +626,16 @@ address by repeating the flag; in that case the first instance is used
 for the reverse address-to-name mapping. Note that a name used in 
 --interface-name may not appear in /etc/hosts.
 .TP
-.B --synth-domain=<domain>,<address range>[,<prefix>]
+.B --synth-domain=<domain>,<address range>[,<prefix>[*]]
 Create artificial A/AAAA and PTR records for an address range. The
-records use the address, with periods (or colons for IPv6) replaced
-with dashes.
+records either seqential numbers or the address, with periods (or colons for IPv6) replaced with dashes.
 
-An example should make this clearer.
-.B --synth-domain=thekelleys.org.uk,192.168.0.0/24,internal-
+An examples should make this clearer. First sequential numbers.
+.B --synth-domain=thekelleys.org.uk,192.168.0.50,192.168.0.70,internal-*
+results in the name internal-0.thekelleys.org.uk. returning 192.168.0.50, internal-1.thekelleys.org.uk returning 192.168.0.51 and so on. (note the *) The same principle applies to IPv6 addresses (where the numbers may be very large). Reverse lookups from address to name behave as expected.
+
+Second, 
+.B --synth-domain=thekelleys.org.uk,192.168.0.0/24,internal- (no *)
 will result in a query for internal-192-168-0-56.thekelleys.org.uk returning
 192.168.0.56 and a reverse query vice versa. The same applies to IPv6,
 but IPv6 addresses may start with '::'
@@ -641,7 +645,7 @@ configured a zero is added in front of the label. ::1 becomes 0--1.
 V4 mapped IPv6 addresses, which have a representation like ::ffff:1.2.3.4 are handled specially, and become like 0--ffff-1-2-3-4
 
 The address range can be of the form
-<ip address>,<ip address> or <ip address>/<netmask>
+<ip address>,<ip address> or <ip address>/<netmask> in both forms of the option.
 .TP
 .B --add-mac[=base64|text]
 Add the MAC address of the requestor to DNS queries which are
@@ -655,7 +659,7 @@ given for --add-subnet applies to --add-mac too. An alternative encoding of the
 MAC, as base64, is enabled by adding the "base64" parameter and a human-readable encoding of hex-and-colons is enabled by added the "text" parameter.
 .TP
 .B --add-cpe-id=<string>
-Add a arbitrary identifying string to o DNS queries which are
+Add an arbitrary identifying string to o DNS queries which are
 forwarded upstream.
 .TP 
 .B --add-subnet[[=[<IPv4 address>/]<IPv4 prefix length>][,[<IPv6 address>/]<IPv6 prefix length>]]
@@ -715,8 +719,8 @@ is set and the upstream servers don't support DNSSEC, then DNS service will be e
 .TP
 .B --trust-anchor=[<class>],<domain>,<key-tag>,<algorithm>,<digest-type>,<digest>
 Provide DS records to act a trust anchors for DNSSEC
-validation. Typically these will be the DS record(s) for Zone Signing
-key(s) of the root zone,
+validation. Typically these will be the DS record(s) for Key Signing
+key(s) (KSK) of the root zone,
 but trust anchors for limited domains are also possible. The current
 root-zone trust anchors may be downloaded from https://data.iana.org/root-anchors/root-anchors.xml 
 .TP
@@ -736,10 +740,14 @@ section on
 DNSSEC signatures are only valid for specified time windows, and should be rejected outside those windows. This generates an
 interesting chicken-and-egg problem for machines which don't have a hardware real time clock. For these machines to determine the correct 
 time typically requires use of NTP and therefore DNS, but validating DNS requires that the correct time is already known. Setting this flag
-removes the time-window checks (but not other DNSSEC validation.) only until the dnsmasq process receives SIGHUP. The intention is
+removes the time-window checks (but not other DNSSEC validation.) only until the dnsmasq process receives SIGINT. The intention is
 that dnsmasq should be started with this flag when the platform determines that reliable time is not currently available. As soon as 
-reliable time is established, a SIGHUP should be sent to dnsmasq, which enables time checking, and purges the cache of DNS records
-which have not been throughly checked.
+reliable time is established, a SIGINT should be sent to dnsmasq, which enables time checking, and purges the cache of DNS records
+which have not been thoroughly checked.
+
+Earlier versions of dnsmasq overloaded SIGHUP (which re-reads much configuration) to also enable time validation.
+
+If dnsmasq is run in debug mode (-d flag) then SIGINT retains its usual meaning of terminating the dnsmasq process.
 .TP
 .B --dnssec-timestamp=<path>
 Enables an alternative way of checking the validity of the system time for DNSSEC (see --dnssec-no-timecheck). In this case, the 
@@ -1073,7 +1081,7 @@ in a dhcp-optsfile.
 This is equivalent to dhcp-hostsfile, except for the following. The path MUST be a
 directory, and not an individual file. Changed or new files within
 the directory are read automatically, without the need to send SIGHUP.
-If a file is deleted for changed after it has been read by dnsmasq, then the
+If a file is deleted or changed after it has been read by dnsmasq, then the
 host record it contained will remain until dnsmasq receives a SIGHUP, or 
 is restarted; ie host records are only added dynamically.
 .TP
@@ -1315,7 +1323,7 @@ Perform boolean operations on tags. Any tag appearing as set:<tag> is set if
 all the tags which appear as tag:<tag> are set, (or unset when tag:!<tag> is used)
 If no tag:<tag> appears set:<tag> tags are set unconditionally.
 Any number of set: and tag: forms may appear, in any order. 
-Tag-if lines ares executed in order, so if the tag in tag:<tag> is a
+Tag-if lines are executed in order, so if the tag in tag:<tag> is a
 tag set by another
 .B tag-if,
 the line which sets the tag must precede the one which tests it.
@@ -1691,13 +1699,17 @@ option also forces the leasechange script to be called on changes
 to the client-id and lease length and expiry time.
 .TP
 .B --bridge-interface=<interface>,<alias>[,<alias>]
-Treat DHCP (v4 and v6) request and IPv6 Router Solicit packets
+Treat DHCP (v4 and v6) requests and IPv6 Router Solicit packets
 arriving at any of the <alias> interfaces as if they had arrived at
 <interface>.  This option allows dnsmasq to provide DHCP and RA
 service over unaddressed and unbridged Ethernet interfaces, e.g. on an
 OpenStack compute host where each such interface is a TAP interface to
 a VM, or as in "old style bridging" on BSD platforms.  A trailing '*'
 wildcard can be used in each <alias>.
+
+It is permissible to add more than one alias using more than one --bridge-interface option since 
+--bridge-interface=int1,alias1,alias2 is exactly equivalent to
+--bridge-interface=int1,alias1 --bridge-interface=int1,alias2
 .TP
 .B \-s, --domain=<domain>[,<address range>[,local]]
 Specifies DNS domains for the DHCP server. Domains may be be given 
@@ -1979,7 +1991,7 @@ and
 
  
 .PP
-Dnsmasq is a DNS query forwarder: it it not capable of recursively
+Dnsmasq is a DNS query forwarder: it is not capable of recursively
 answering arbitrary queries starting from the root servers but
 forwards such queries to a fully recursive upstream DNS server which is
 typically provided by an ISP. By default, dnsmasq reads
