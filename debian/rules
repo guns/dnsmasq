@@ -49,7 +49,7 @@ ifeq (,$(filter nodbus,$(DEB_BUILD_OPTIONS)))
 endif
 
 ifeq (,$(filter noidn, $(DEB_BUILD_OPTIONS)))
-	DEB_COPTS += -DHAVE_IDN
+	DEB_COPTS += -DHAVE_LIBIDN2
 endif
 
 ifeq (,$(filter noconntrack,$(DEB_BUILD_OPTIONS)))
@@ -129,6 +129,8 @@ define add_docs
 	gzip -9n $1/usr/share/doc/$(package)/changelog.archive
 	install -m 644 dbus/DBus-interface $1/usr/share/doc/$(package)/.
 	gzip -9n $1/usr/share/doc/$(package)/DBus-interface	
+	install -m 644 debian/systemd_howto $1/usr/share/doc/$(package)/.
+	gzip -9n $1/usr/share/doc/$(package)/systemd_howto
 	gzip -9n $1/usr/share/man/man8/dnsmasq.8
 	for f in $1/usr/share/man/*; do \
 		if [ -f $$f/man8/dnsmasq.8 ]; then \
@@ -161,7 +163,7 @@ binary-indep:	checkroot
 	rm -rf debian/trees/daemon
 	install -m 755 \
 	        -d debian/trees/daemon/DEBIAN \
-		-d debian/trees/daemon/usr/share/doc \
+		-d debian/trees/daemon/usr/share/doc/dnsmasq \
 	        -d debian/trees/daemon/etc/init.d \
 		-d debian/trees/daemon/etc/dnsmasq.d \
 	        -d debian/trees/daemon/etc/resolvconf/update.d \
@@ -181,6 +183,7 @@ binary-indep:	checkroot
 	install -m 644 dnsmasq.conf.example debian/trees/daemon/etc/dnsmasq.conf
 	install -m 644 debian/readme.dnsmasq.d debian/trees/daemon/etc/dnsmasq.d/README
 	install -m 644 debian/systemd.service debian/trees/daemon/lib/systemd/system/dnsmasq.service
+	install -m 644 debian/systemd@.service debian/trees/daemon/lib/systemd/system/dnsmasq@.service
 	install -m 644 debian/tmpfiles.conf debian/trees/daemon/usr/lib/tmpfiles.d/dnsmasq.conf
 	install -m 644 debian/insserv debian/trees/daemon/etc/insserv.conf.d/dnsmasq
 	ln -s $(package) debian/trees/daemon/usr/share/doc/dnsmasq
@@ -194,7 +197,7 @@ binary-indep:	checkroot
 binary-arch:	checkroot 
 	$(call build_tree,debian/trees/base)
 	make $(TARGET) BUILDDIR=debian/build/no-lua PREFIX=/usr DESTDIR=`pwd`/debian/trees/base CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" COPTS="$(DEB_COPTS)" CC=$(CC) PKG_CONFIG=$(PKG_CONFIG)
-ifeq (,$(findstring nodocs,$(DEB_BUILD_OPTIONS)))
+ifeq (,$(findstring nodoc,$(DEB_BUILD_OPTIONS)))
 	$(call add_docs,debian/trees/base)
 else	
 	rm -rf debian/trees/base/usr/share/man
@@ -213,7 +216,7 @@ endif
 
 	$(call build_tree,debian/trees/lua-base)
 	make $(TARGET) BUILDDIR=debian/build/lua PREFIX=/usr DESTDIR=`pwd`/debian/trees/lua-base CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" COPTS="-DHAVE_LUASCRIPT $(DEB_COPTS)" CC=$(CC) PKG_CONFIG=$(PKG_CONFIG)
-ifeq (,$(findstring nodocs,$(DEB_BUILD_OPTIONS)))
+ifeq (,$(findstring nodoc,$(DEB_BUILD_OPTIONS)))
 	$(call add_docs,debian/trees/lua-base)
 else	
 	rm -rf debian/trees/lua-base/usr/share/man
@@ -239,14 +242,14 @@ ifeq ($(DEB_HOST_ARCH_OS),linux)
 	install -m 755 -d debian/trees/utils/DEBIAN \
 	               -d debian/trees/utils/usr/bin \
                        -d debian/trees/utils/usr/share/doc/dnsmasq-utils
-ifeq (,$(findstring nodocs,$(DEB_BUILD_OPTIONS)))
+ifeq (,$(findstring nodoc,$(DEB_BUILD_OPTIONS)))
 	install -m 755 -d debian/trees/utils/usr/share/man/man1
 endif
 	make -C contrib/lease-tools PREFIX=/usr DESTDIR=`pwd`/debian/trees/utils CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" COPTS="$(DEB_COPTS)" CC=$(CC) PKG_CONFIG=$(PKG_CONFIG)
 	install -m 755 contrib/lease-tools/dhcp_release debian/trees/utils/usr/bin/dhcp_release
 	install -m 755 contrib/lease-tools/dhcp_release6 debian/trees/utils/usr/bin/dhcp_release6
 	install -m 755 contrib/lease-tools/dhcp_lease_time debian/trees/utils/usr/bin/dhcp_lease_time
-ifeq (,$(findstring nodocs,$(DEB_BUILD_OPTIONS)))
+ifeq (,$(findstring nodoc,$(DEB_BUILD_OPTIONS)))
 	install -m 644 contrib/lease-tools/dhcp_release.1 debian/trees/utils/usr/share/man/man1/dhcp_release.1
 	gzip -9n debian/trees/utils/usr/share/man/man1/dhcp_release.1
 	install -m 644 contrib/lease-tools/dhcp_release6.1 debian/trees/utils/usr/share/man/man1/dhcp_release6.1

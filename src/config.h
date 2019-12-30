@@ -131,7 +131,6 @@ HAVE_INOTIFY
 
 NO_ID
    Don't report *.bind CHAOS info to clients, forward such requests upstream instead.
-NO_IPV6
 NO_TFTP
 NO_DHCP
 NO_DHCP6
@@ -141,8 +140,8 @@ NO_AUTH
 NO_DUMPFILE
 NO_INOTIFY
    these are available to explicitly disable compile time options which would 
-   otherwise be enabled automatically (HAVE_IPV6, >2Gb file sizes) or 
-   which are enabled  by default in the distributed source tree. Building dnsmasq
+   otherwise be enabled automatically or which are enabled  by default 
+   in the distributed source tree. Building dnsmasq
    with something like "make COPTS=-DNO_SCRIPT" will do the trick.
 NO_GMP
    Don't use and link against libgmp, Useful if nettle is built with --enable-mini-gmp.
@@ -240,27 +239,13 @@ HAVE_SOCKADDR_SA_LEN
    defined if struct sockaddr has sa_len field (*BSD) 
 */
 
-/* Must precede __linux__ since uClinux defines __linux__ too. */
-#if defined(__uClinux__)
-#define HAVE_LINUX_NETWORK
-#define HAVE_GETOPT_LONG
-#undef HAVE_SOCKADDR_SA_LEN
-/* Never use fork() on uClinux. Note that this is subtly different from the
-   --keep-in-foreground option, since it also  suppresses forking new 
-   processes for TCP connections and disables the call-a-script on leasechange
-   system. It's intended for use on MMU-less kernels. */
-#define NO_FORK
-
-#elif defined(__UCLIBC__)
+#if defined(__UCLIBC__)
 #define HAVE_LINUX_NETWORK
 #if defined(__UCLIBC_HAS_GNU_GETOPT__) || \
    ((__UCLIBC_MAJOR__==0) && (__UCLIBC_MINOR__==9) && (__UCLIBC_SUBLEVEL__<21))
 #    define HAVE_GETOPT_LONG
 #endif
 #undef HAVE_SOCKADDR_SA_LEN
-#if !defined(__ARCH_HAS_MMU__) && !defined(__UCLIBC_HAS_MMU__)
-#  define NO_FORK
-#endif
 #if defined(__UCLIBC_HAS_IPV6__)
 #  ifndef IPV6_V6ONLY
 #    define IPV6_V6ONLY 26
@@ -288,11 +273,16 @@ HAVE_SOCKADDR_SA_LEN
 #define HAVE_BSD_NETWORK
 #define HAVE_GETOPT_LONG
 #define HAVE_SOCKADDR_SA_LEN
+#define NO_IPSET
 /* Define before sys/socket.h is included so we get socklen_t */
 #define _BSD_SOCKLEN_T_
 /* Select the RFC_3542 version of the IPv6 socket API. 
    Define before netinet6/in6.h is included. */
 #define __APPLE_USE_RFC_3542 
+/* Required for Mojave. */
+#ifndef SOL_TCP
+#  define SOL_TCP IPPROTO_TCP
+#endif
 #define NO_IPSET
 
 #elif defined(__NetBSD__)
@@ -308,28 +298,8 @@ HAVE_SOCKADDR_SA_LEN
  
 #endif
 
-/* Decide if we're going to support IPv6 */
-/* We assume that systems which don't have IPv6
-   headers don't have ntop and pton either */
-
-#if defined(INET6_ADDRSTRLEN) && defined(IPV6_V6ONLY)
-#  define HAVE_IPV6
-#  define ADDRSTRLEN INET6_ADDRSTRLEN
-#else
-#  if !defined(INET_ADDRSTRLEN)
-#      define INET_ADDRSTRLEN 16 /* 4*3 + 3 dots + NULL */
-#  endif
-#  undef HAVE_IPV6
-#  define ADDRSTRLEN INET_ADDRSTRLEN
-#endif
-
-
 /* rules to implement compile-time option dependencies and 
    the NO_XXX flags */
-
-#ifdef NO_IPV6
-#undef HAVE_IPV6
-#endif
 
 #ifdef NO_TFTP
 #undef HAVE_TFTP
@@ -340,7 +310,7 @@ HAVE_SOCKADDR_SA_LEN
 #undef HAVE_DHCP6
 #endif
 
-#if defined(NO_DHCP6) || !defined(HAVE_IPV6)
+#if defined(NO_DHCP6)
 #undef HAVE_DHCP6
 #endif
 
@@ -349,7 +319,7 @@ HAVE_SOCKADDR_SA_LEN
 #define HAVE_DHCP
 #endif
 
-#if defined(NO_SCRIPT) || defined(NO_FORK)
+#if defined(NO_SCRIPT)
 #undef HAVE_SCRIPT
 #undef HAVE_LUASCRIPT
 #endif
@@ -385,9 +355,6 @@ HAVE_SOCKADDR_SA_LEN
 #ifdef DNSMASQ_COMPILE_OPTS
 
 static char *compile_opts = 
-#ifndef HAVE_IPV6
-"no-"
-#endif
 "IPv6 "
 #ifndef HAVE_GETOPT_LONG
 "no-"
@@ -396,13 +363,14 @@ static char *compile_opts =
 #ifdef HAVE_BROKEN_RTC
 "no-RTC "
 #endif
-#ifdef NO_FORK
-"no-MMU "
-#endif
 #ifndef HAVE_DBUS
 "no-"
 #endif
 "DBus "
+#ifndef HAVE_UBUS
+"no-"
+#endif
+"UBus "
 #ifndef LOCALEDIR
 "no-"
 #endif

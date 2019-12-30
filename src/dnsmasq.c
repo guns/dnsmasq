@@ -52,8 +52,12 @@ int main (int argc, char **argv)
 #if defined(HAVE_LINUX_NETWORK)
   cap_user_header_t hdr = NULL;
   cap_user_data_t data = NULL;
+  int need_cap_net_admin = 0;
+  int need_cap_net_raw = 0;
+  int need_cap_net_bind_service = 0;
   char *bound_device = NULL;
   int did_bind = 0;
+  struct server *serv;
 #endif 
 #if defined(HAVE_DHCP) || defined(HAVE_DHCP6)
   struct dhcp_context *context;
@@ -122,7 +126,7 @@ int main (int argc, char **argv)
       daemon->workspacename = safe_malloc(MAXDNAME * 2);
       /* one char flag per possible RR in answer section (may get extended). */
       daemon->rr_status_sz = 64;
-      daemon->rr_status = safe_malloc(daemon->rr_status_sz);
+      daemon->rr_status = safe_malloc(sizeof(*daemon->rr_status) * daemon->rr_status_sz);
     }
 #endif
 
@@ -285,11 +289,24 @@ int main (int argc, char **argv)
     }
   
   if (daemon->dhcp || daemon->relay4)
-    dhcp_init();
+    {
+      dhcp_init();
+#   ifdef HAVE_LINUX_NETWORK
+      if (!option_bool(OPT_NO_PING))
+	need_cap_net_raw = 1;
+      need_cap_net_admin = 1;
+#   endif
+    }
   
 #  ifdef HAVE_DHCP6
   if (daemon->doing_ra || daemon->doing_dhcp6 || daemon->relay6)
-    ra_init(now);
+    {
+      ra_init(now);
+#   ifdef HAVE_LINUX_NETWORK
+      need_cap_net_raw = 1;
+      need_cap_net_admin = 1;
+#   endif
+    }
   
   if (daemon->doing_dhcp6 || daemon->relay6)
     dhcp6_init();
@@ -299,7 +316,12 @@ int main (int argc, char **argv)
 
 #ifdef HAVE_IPSET
   if (daemon->ipsets)
-    ipset_init();
+    {
+      ipset_init();
+#  ifdef HAVE_LINUX_NETWORK
+      need_cap_net_admin = 1;
+#  endif
+    }
 #endif
 
 #if  defined(HAVE_LINUX_NETWORK)
@@ -366,9 +388,7 @@ int main (int argc, char **argv)
     {
       cache_init();
 
-#ifdef HAVE_DNSSEC
       blockdata_init();
-#endif
     }
 
 #ifdef HAVE_INOTIFY
@@ -399,6 +419,16 @@ int main (int argc, char **argv)
     }
 #else
   die(_("DBus not available: set HAVE_DBUS in src/config.h"), NULL, EC_BADCONF);
+#endif
+
+  if (option_bool(OPT_UBUS))
+#ifdef HAVE_UBUS
+    {
+      daemon->ubus = NULL;
+      ubus_init();
+    }
+#else
+  die(_("UBus not available: set HAVE_UBUS in src/config.h"), NULL, EC_BADCONF);
 #endif
 
   if (daemon->port != 0)
@@ -442,28 +472,81 @@ int main (int argc, char **argv)
     }
 
 #if defined(HAVE_LINUX_NETWORK)
+  /* We keep CAP_NETADMIN (for ARP-injection) and
+     CAP_NET_RAW (for icmp) if we're doing dhcp,
+     if we have yet to bind ports because of DAD, 
+     or we're doing it dynamically, we need CAP_NET_BIND_SERVICE. */
+  if ((is_dad_listeners() || option_bool(OPT_CLEVERBIND)) &&
+      (option_bool(OPT_TFTP) || (daemon->port != 0 && daemon->port <= 1024)))
+    need_cap_net_bind_service = 1;
+
+  /* usptream servers which bind to an interface call SO_BINDTODEVICE
+     for each TCP connection, so need CAP_NET_RAW */
+  for (serv = daemon->servers; serv; serv = serv->next)
+    if (serv->interface[0] != 0)
+      need_cap_net_raw = 1;
+
+  /* If we're doing Dbus or UBus, the above can be set dynamically,
+     (as can ports) so always (potentially) needed. */
+#ifdef HAVE_DBUS
+  if (option_bool(OPT_DBUS))
+    {
+      need_cap_net_bind_service = 1;
+      need_cap_net_raw = 1;
+    }
+#endif
+
+#ifdef HAVE_UBUS
+  if (option_bool(OPT_UBUS))
+    {
+      need_cap_net_bind_service = 1;
+      need_cap_net_raw = 1;
+    }
+#endif
+  
   /* determine capability API version here, while we can still
      call safe_malloc */
-  if (ent_pw && ent_pw->pw_uid != 0)
+  int capsize = 1; /* for header version 1 */
+  char *fail = NULL;
+  
+  hdr = safe_malloc(sizeof(*hdr));
+  
+  /* find version supported by kernel */
+  memset(hdr, 0, sizeof(*hdr));
+  capget(hdr, NULL);
+  
+  if (hdr->version != LINUX_CAPABILITY_VERSION_1)
     {
-      int capsize = 1; /* for header version 1 */
-      hdr = safe_malloc(sizeof(*hdr));
-
-      /* find version supported by kernel */
-      memset(hdr, 0, sizeof(*hdr));
-      capget(hdr, NULL);
-      
-      if (hdr->version != LINUX_CAPABILITY_VERSION_1)
-	{
-	  /* if unknown version, use largest supported version (3) */
-	  if (hdr->version != LINUX_CAPABILITY_VERSION_2)
-	    hdr->version = LINUX_CAPABILITY_VERSION_3;
-	  capsize = 2;
-	}
-      
-      data = safe_malloc(sizeof(*data) * capsize);
-      memset(data, 0, sizeof(*data) * capsize);
+      /* if unknown version, use largest supported version (3) */
+      if (hdr->version != LINUX_CAPABILITY_VERSION_2)
+	hdr->version = LINUX_CAPABILITY_VERSION_3;
+      capsize = 2;
     }
+  
+  data = safe_malloc(sizeof(*data) * capsize);
+  capget(hdr, data); /* Get current values, for verification */
+
+  if (need_cap_net_admin && !(data->permitted & (1 << CAP_NET_ADMIN)))
+    fail = "NET_ADMIN";
+  else if (need_cap_net_raw && !(data->permitted & (1 << CAP_NET_RAW)))
+    fail = "NET_RAW";
+  else if (need_cap_net_bind_service && !(data->permitted & (1 << CAP_NET_BIND_SERVICE)))
+    fail = "NET_BIND_SERVICE";
+  
+  if (fail)
+    die(_("process is missing required capability %s"), fail, EC_MISC);
+
+  /* Now set bitmaps to set caps after daemonising */
+  memset(data, 0, sizeof(*data) * capsize);
+  
+  if (need_cap_net_admin)
+    data->effective |= (1 << CAP_NET_ADMIN);
+  if (need_cap_net_raw)
+    data->effective |= (1 << CAP_NET_RAW);
+  if (need_cap_net_bind_service)
+    data->effective |= (1 << CAP_NET_BIND_SERVICE);
+  
+  data->permitted = data->effective;  
 #endif
 
   /* Use a pipe to carry signals and other events back to the event loop 
@@ -485,7 +568,6 @@ int main (int argc, char **argv)
       if (chdir("/") != 0)
 	die(_("cannot chdir to filesystem root: %s"), NULL, EC_MISC); 
 
-#ifndef NO_FORK      
       if (!option_bool(OPT_NO_FORK))
 	{
 	  pid_t pid;
@@ -504,7 +586,7 @@ int main (int argc, char **argv)
 	      char *msg;
 
 	      /* close our copy of write-end */
-	      while (retry_send(close(err_pipe[1])));
+	      close(err_pipe[1]);
 	      
 	      /* check for errors after the fork */
 	      if (read_event(err_pipe[0], &ev, &msg))
@@ -513,7 +595,7 @@ int main (int argc, char **argv)
 	      _exit(EC_GOOD);
 	    } 
 	  
-	  while (retry_send(close(err_pipe[0])));
+	  close(err_pipe[0]);
 
 	  /* NO calls to die() from here on. */
 	  
@@ -525,7 +607,6 @@ int main (int argc, char **argv)
 	  if (pid != 0)
 	    _exit(0);
 	}
-#endif
             
       /* write pidfile _after_ forking ! */
       if (daemon->runfile)
@@ -576,8 +657,7 @@ int main (int argc, char **argv)
 		err = 1;
 	      else
 		{
-		  while (retry_send(close(fd)));
-		  if (errno != 0)
+		  if (close(fd) == -1)
 		    err = 1;
 		}
 	    }
@@ -630,18 +710,9 @@ int main (int argc, char **argv)
       if (ent_pw && ent_pw->pw_uid != 0)
 	{     
 #if defined(HAVE_LINUX_NETWORK)	  
-	  /* On linux, we keep CAP_NETADMIN (for ARP-injection) and
-	     CAP_NET_RAW (for icmp) if we're doing dhcp. If we have yet to bind 
-	     ports because of DAD, or we're doing it dynamically,
-	     we need CAP_NET_BIND_SERVICE too. */
-	  if (is_dad_listeners() || option_bool(OPT_CLEVERBIND))
-	    data->effective = data->permitted = data->inheritable =
-	      (1 << CAP_NET_ADMIN) | (1 << CAP_NET_RAW) | 
-	      (1 << CAP_SETUID) | (1 << CAP_NET_BIND_SERVICE);
-	  else
-	    data->effective = data->permitted = data->inheritable =
-	      (1 << CAP_NET_ADMIN) | (1 << CAP_NET_RAW) | (1 << CAP_SETUID);
-	  
+	  /* Need to be able to drop root. */
+	  data->effective |= (1 << CAP_SETUID);
+	  data->permitted |= (1 << CAP_SETUID);
 	  /* Tell kernel to not clear capabilities when dropping root */
 	  if (capset(hdr, data) == -1 || prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0) == -1)
 	    bad_capabilities = errno;
@@ -682,15 +753,10 @@ int main (int argc, char **argv)
 	    }     
 
 #ifdef HAVE_LINUX_NETWORK
-	  if (is_dad_listeners() || option_bool(OPT_CLEVERBIND))
-	   data->effective = data->permitted =
-	     (1 << CAP_NET_ADMIN) | (1 << CAP_NET_RAW) | (1 << CAP_NET_BIND_SERVICE);
-	 else
-	   data->effective = data->permitted = 
-	     (1 << CAP_NET_ADMIN) | (1 << CAP_NET_RAW);
-	  data->inheritable = 0;
+	  data->effective &= ~(1 << CAP_SETUID);
+	  data->permitted &= ~(1 << CAP_SETUID);
 	  
-	  /* lose the setuid and setgid capabilities */
+	  /* lose the setuid capability */
 	  if (capset(hdr, data) == -1)
 	    {
 	      send_event(err_pipe[1], EVENT_CAP_ERR, errno, NULL);
@@ -776,6 +842,16 @@ int main (int argc, char **argv)
 	my_syslog(LOG_INFO, _("DBus support enabled: connected to system bus"));
       else
 	my_syslog(LOG_INFO, _("DBus support enabled: bus connection pending"));
+    }
+#endif
+
+#ifdef HAVE_UBUS
+  if (option_bool(OPT_UBUS))
+    {
+      if (daemon->ubus)
+        my_syslog(LOG_INFO, _("UBus support enabled: connected to system bus"));
+      else
+        my_syslog(LOG_INFO, _("UBus support enabled: bus connection pending"));
     }
 #endif
 
@@ -924,12 +1000,16 @@ int main (int argc, char **argv)
 
   /* finished start-up - release original process */
   if (err_pipe[1] != -1)
-    while (retry_send(close(err_pipe[1])));
+    close(err_pipe[1]);
   
   if (daemon->port != 0)
     check_servers();
   
   pid = getpid();
+
+  daemon->pipe_to_parent = -1;
+  for (i = 0; i < MAX_PROCS; i++)
+    daemon->tcp_pipes[i] = -1;
   
 #ifdef HAVE_INOTIFY
   /* Using inotify, have to select a resolv file at startup */
@@ -963,7 +1043,7 @@ int main (int argc, char **argv)
 
 #ifdef HAVE_UBUS
       if (option_bool(OPT_UBUS))
-	  set_ubus_listeners();
+        set_ubus_listeners();
 #endif
 	  
 #ifdef HAVE_DHCP
@@ -1098,7 +1178,15 @@ int main (int argc, char **argv)
 
 #ifdef HAVE_UBUS
       if (option_bool(OPT_UBUS))
-        check_ubus_listeners();
+        {
+          /* if we didn't create a UBus connection, retry now. */
+          if (!daemon->ubus)
+            {
+              ubus_init();
+            }
+
+          check_ubus_listeners();
+        }
 #endif
 
       check_dns_listeners(now);
@@ -1446,7 +1534,7 @@ static void async_event(int pipe, time_t now)
 	    do {
 	      helper_write();
 	    } while (!helper_buf_empty() || do_script_run(now));
-	    while (retry_send(close(daemon->helperfd)));
+	    close(daemon->helperfd);
 	  }
 #endif
 	
@@ -1611,7 +1699,7 @@ static int set_dns_listeners(time_t now)
 	 we don't need to explicitly arrange to wake up here */
       if  (listener->tcpfd != -1)
 	for (i = 0; i < MAX_PROCS; i++)
-	  if (daemon->tcp_pids[i] == 0)
+	  if (daemon->tcp_pids[i] == 0 && daemon->tcp_pipes[i] == -1)
 	    {
 	      poll_listen(listener->tcpfd, POLLIN);
 	      break;
@@ -1624,6 +1712,11 @@ static int set_dns_listeners(time_t now)
 
     }
   
+  if (!option_bool(OPT_DEBUG))
+    for (i = 0; i < MAX_PROCS; i++)
+      if (daemon->tcp_pipes[i] != -1)
+	poll_listen(daemon->tcp_pipes[i], POLLIN);
+  
   return wait;
 }
 
@@ -1632,7 +1725,8 @@ static void check_dns_listeners(time_t now)
   struct serverfd *serverfdp;
   struct listener *listener;
   int i;
-
+  int pipefd[2];
+  
   for (serverfdp = daemon->sfds; serverfdp; serverfdp = serverfdp->next)
     if (poll_check(serverfdp->fd, POLLIN))
       reply_query(serverfdp->fd, serverfdp->source_addr.sa.sa_family, now);
@@ -1642,7 +1736,24 @@ static void check_dns_listeners(time_t now)
       if (daemon->randomsocks[i].refcount != 0 && 
 	  poll_check(daemon->randomsocks[i].fd, POLLIN))
 	reply_query(daemon->randomsocks[i].fd, daemon->randomsocks[i].family, now);
-  
+
+  /* Races. The child process can die before we read all of the data from the
+     pipe, or vice versa. Therefore send tcp_pids to zero when we wait() the 
+     process, and tcp_pipes to -1 and close the FD when we read the last
+     of the data - indicated by cache_recv_insert returning zero.
+     The order of these events is indeterminate, and both are needed
+     to free the process slot. Once the child process has gone, poll()
+     returns POLLHUP, not POLLIN, so have to check for both here. */
+  if (!option_bool(OPT_DEBUG))
+    for (i = 0; i < MAX_PROCS; i++)
+      if (daemon->tcp_pipes[i] != -1 &&
+	  poll_check(daemon->tcp_pipes[i], POLLIN | POLLHUP) &&
+	  !cache_recv_insert(now, daemon->tcp_pipes[i]))
+	{
+	  close(daemon->tcp_pipes[i]);
+	  daemon->tcp_pipes[i] = -1;	
+	}
+	
   for (listener = daemon->listeners; listener; listener = listener->next)
     {
       if (listener->fd != -1 && poll_check(listener->fd, POLLIN))
@@ -1668,7 +1779,7 @@ static void check_dns_listeners(time_t now)
 	  
 	  if (getsockname(confd, (struct sockaddr *)&tcp_addr, &tcp_len) == -1)
 	    {
-	      while (retry_send(close(confd)));
+	      close(confd);
 	      continue;
 	    }
 	  
@@ -1696,12 +1807,12 @@ static void check_dns_listeners(time_t now)
 	      if ((if_index = tcp_interface(confd, tcp_addr.sa.sa_family)) != 0 &&
 		  indextoname(listener->tcpfd, if_index, intr_name))
 		{
-		  struct all_addr addr;
-		  addr.addr.addr4 = tcp_addr.in.sin_addr;
-#ifdef HAVE_IPV6
+		  union all_addr addr;
+		  
 		  if (tcp_addr.sa.sa_family == AF_INET6)
-		    addr.addr.addr6 = tcp_addr.in6.sin6_addr;
-#endif
+		    addr.addr6 = tcp_addr.in6.sin6_addr;
+		  else
+		    addr.addr4 = tcp_addr.in.sin_addr;
 		  
 		  for (iface = daemon->interfaces; iface; iface = iface->next)
 		    if (iface->index == if_index)
@@ -1733,27 +1844,30 @@ static void check_dns_listeners(time_t now)
 	  if (!client_ok)
 	    {
 	      shutdown(confd, SHUT_RDWR);
-	      while (retry_send(close(confd)));
+	      close(confd);
 	    }
-#ifndef NO_FORK
-	  else if (!option_bool(OPT_DEBUG) && (p = fork()) != 0)
+	  else if (!option_bool(OPT_DEBUG) && pipe(pipefd) == 0 && (p = fork()) != 0)
 	    {
-	      if (p != -1)
+	      close(pipefd[1]); /* parent needs read pipe end. */
+	      if (p == -1)
+		close(pipefd[0]);
+	      else
 		{
 		  int i;
+
 		  for (i = 0; i < MAX_PROCS; i++)
-		    if (daemon->tcp_pids[i] == 0)
+		    if (daemon->tcp_pids[i] == 0 && daemon->tcp_pipes[i] == -1)
 		      {
 			daemon->tcp_pids[i] = p;
+			daemon->tcp_pipes[i] = pipefd[0];
 			break;
 		      }
 		}
-	      while (retry_send(close(confd)));
+	      close(confd);
 
 	      /* The child can use up to TCP_MAX_QUERIES ids, so skip that many. */
 	      daemon->log_id += TCP_MAX_QUERIES;
 	    }
-#endif
 	  else
 	    {
 	      unsigned char *buff;
@@ -1761,7 +1875,7 @@ static void check_dns_listeners(time_t now)
 	      int flags;
 	      struct in_addr netmask;
 	      int auth_dns;
-
+	   
 	      if (iface)
 		{
 		  netmask = iface->netmask;
@@ -1773,12 +1887,14 @@ static void check_dns_listeners(time_t now)
 		  auth_dns = 0;
 		}
 
-#ifndef NO_FORK
 	      /* Arrange for SIGALRM after CHILD_LIFETIME seconds to
 		 terminate the process. */
 	      if (!option_bool(OPT_DEBUG))
-		alarm(CHILD_LIFETIME);
-#endif
+		{
+		  alarm(CHILD_LIFETIME);
+		  close(pipefd[0]); /* close read end in child. */
+		  daemon->pipe_to_parent = pipefd[1];
+		}
 
 	      /* start with no upstream connections. */
 	      for (s = daemon->servers; s; s = s->next)
@@ -1793,7 +1909,7 @@ static void check_dns_listeners(time_t now)
 	      buff = tcp_request(confd, now, &tcp_addr, netmask, auth_dns);
 	       
 	      shutdown(confd, SHUT_RDWR);
-	      while (retry_send(close(confd)));
+	      close(confd);
 	      
 	      if (buff)
 		free(buff);
@@ -1802,15 +1918,13 @@ static void check_dns_listeners(time_t now)
 		if (s->tcpfd != -1)
 		  {
 		    shutdown(s->tcpfd, SHUT_RDWR);
-		    while (retry_send(close(s->tcpfd)));
+		    close(s->tcpfd);
 		  }
-#ifndef NO_FORK		   
 	      if (!option_bool(OPT_DEBUG))
 		{
 		  flush_log();
 		  _exit(0);
 		}
-#endif
 	    }
 	}
     }
@@ -1880,7 +1994,7 @@ int icmp_ping(struct in_addr addr)
   gotreply = delay_dhcp(dnsmasq_time(), PING_WAIT, fd, addr.s_addr, id);
 
 #if defined(HAVE_LINUX_NETWORK) || defined(HAVE_SOLARIS_NETWORK)
-  while (retry_send(close(fd)));
+  close(fd);
 #else
   opt = 1;
   setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &opt, sizeof(opt));
