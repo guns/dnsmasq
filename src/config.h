@@ -164,11 +164,11 @@ RESOLVFILE
    has no library dependencies other than libc */
 
 #define HAVE_DHCP
-/* #define HAVE_DHCP6 */
+#define HAVE_DHCP6 
 /* #define HAVE_TFTP */
 /* #define HAVE_SCRIPT */
-/* #define HAVE_AUTH */
-#define HAVE_IPSET
+#define HAVE_AUTH
+#define HAVE_IPSET 
 #define HAVE_LOOP
 #define HAVE_DUMPFILE
 
@@ -182,9 +182,9 @@ RESOLVFILE
 /* #define HAVE_LUASCRIPT */
 /* #define HAVE_DBUS */
 #define HAVE_IDN
-/* #define HAVE_LIBIDN2 */
-/* #define HAVE_CONNTRACK */
-/* #define HAVE_DNSSEC */
+#define HAVE_LIBIDN2
+#define HAVE_CONNTRACK
+#define HAVE_DNSSEC
 
 
 /* Default locations for important system files. */
@@ -278,7 +278,7 @@ HAVE_SOCKADDR_SA_LEN
 #define _BSD_SOCKLEN_T_
 /* Select the RFC_3542 version of the IPv6 socket API. 
    Define before netinet6/in6.h is included. */
-#define __APPLE_USE_RFC_3542 
+#define __APPLE_USE_RFC_3542
 /* Required for Mojave. */
 #ifndef SOL_TCP
 #  define SOL_TCP IPPROTO_TCP
@@ -381,7 +381,7 @@ static char *compile_opts =
  #if !defined(HAVE_IDN)
 "no-"
  #endif 
-"IDN "
+"IDN " 
 #endif
 #ifndef HAVE_DHCP
 "no-"
