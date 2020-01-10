@@ -9,7 +9,7 @@ license=('GPL')
 groups=('nerv')
 backup=('etc/dnsmasq.conf'
         'etc/dnsmasq.resolv.conf')
-depends=('glibc' 'libidn')
+depends=('glibc' 'libidn' 'libidn2' 'libnetfilter_conntrack' 'nettle' 'gmp')
 install=dnsmasq.install
 makedepends=('git')
 provides=('dnsmasq')
