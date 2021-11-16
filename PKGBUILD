@@ -18,7 +18,7 @@ replaces=('dnsmasq-guns')
 
 envmake() {
     DESTDIR="$pkgdir" PREFIX=/usr BINDIR=/usr/bin RCDIR= \
-    make -e -j $(grep -c ^processor /proc/cpuinfo) "$@"
+    make -e -j "$(nproc)" "$@"
 }
 
 pkgver() {
