@@ -2729,6 +2729,13 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 	  comma = split_chr(arg, '/');
 	  new = opt_malloc(sizeof(struct  rebind_domain));
 	  new->domain = canonicalise_opt(arg);
+	  if (new->domain != 0)
+	    {
+	      /* Let "example.com." == "example.com" */
+	      int dlen = strlen(new->domain);
+	      if (dlen > 0 && new->domain[dlen - 1] == '.')
+	        new->domain[dlen - 1] = 0;
+	    }
 	  new->next = daemon->no_rebind;
 	  daemon->no_rebind = new;
 	  arg = comma;

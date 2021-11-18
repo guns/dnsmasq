@@ -149,14 +149,91 @@ static void server_send_log(struct server *server, int fd,
 }
 #endif
 
+struct substring {
+  const char *base;
+  size_t offset;
+  size_t len;
+};
+
+static int substrings_are_equal(struct substring *a, struct substring *b)
+{
+  if (a->len == b->len)
+    return strncmp(a->base + a->offset, b->base + b->offset, a->len) == 0;
+  else
+    return 0;
+}
+
+static int rfind_next_domain_part(struct substring *ss)
+{
+  if (ss->offset == 0)
+    return 0; /* No more domain parts */
+
+  ss->len = 0;
+  ss->offset--;
+
+  if (ss->base[ss->offset] == '.')
+    {
+      if (ss->offset == 0)
+	return 0; /* Domain has a leading dot, so there are no more domain parts */
+      ss->offset--;
+    }
+
+  ss->len++;
+
+  while (ss->offset > 0)
+    {
+      if (ss->base[ss->offset - 1] == '.')
+	break;
+      ss->offset--;
+      ss->len++;
+    }
+
+  return 1;
+}
+
 static int domain_no_rebind(char *domain)
 {
+  if (daemon->no_rebind == NULL)
+    return 0;
+
   struct rebind_domain *rbd;
-  size_t tlen, dlen = strlen(domain);
-  
+  size_t dlen = strlen(domain);
+
   for (rbd = daemon->no_rebind; rbd; rbd = rbd->next)
-    if (dlen >= (tlen = strlen(rbd->domain)) && strcmp(rbd->domain, &domain[dlen - tlen]) == 0)
-      return 1;
+    {
+      struct substring domain_ss = {
+	.base = domain,
+	.offset = dlen,
+	.len = 0
+      };
+      struct substring rbd_ss = {
+	.base = rbd->domain,
+	.offset = strlen(rbd->domain),
+	.len = 0
+      };
+      int matches_rebind_domain = 1;
+
+      /* rebind-domain-ok=// means allow "dotless" domains */
+      if (rbd_ss.offset == 0)
+	{
+	  if (strchr(domain, '.') == NULL)
+	    return 1;
+	  else
+	    continue;
+	}
+
+      while (rfind_next_domain_part(&rbd_ss))
+	{
+	  if (!rfind_next_domain_part(&domain_ss) || !substrings_are_equal(&domain_ss, &rbd_ss))
+	    {
+	      matches_rebind_domain = 0;
+	      break;
+	    }
+	}
+
+      if (matches_rebind_domain)
+	return 1;
+    }
 
   return 0;
 }
